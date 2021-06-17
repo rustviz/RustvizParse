@@ -17,26 +17,28 @@ use syn::Stmt;
 use syn::Pat;
 use syn::Expr;
 use syn::FnArg;
+use syn::Type;
 
-#[derive(Debug)]
-struct Owner_info {
+#[derive(Debug, Hash, PartialEq, Eq)]
+struct OwnerInfo {
     Name: Option<String>,
     Reference: bool,
     Mutability: bool
 }
 
-#[derive(Debug)]
-struct func_info {
+#[derive(Debug, Hash, PartialEq, Eq)]
+struct FuncInfo {
     Name: Option<String>
 }
 
-// #[derive(Debug, PartialEq, Eq, Hash)]
+
+#[derive(Debug, Hash, PartialEq, Eq)]
 enum RAP {
-    Owner(Owner_info),
-    MutRef(Owner_info),
-    StaticRef(Owner_info),
-    Struct,
-    Function(func_info),
+    Owner(OwnerInfo),
+    MutRef(OwnerInfo),
+    StaticRef(OwnerInfo),
+    // Struct(),
+    Function(FuncInfo),
 }
 
 fn path_fmt(exprpath : &syn::ExprPath) -> String {
@@ -62,7 +64,9 @@ fn run() -> Result<(), Box<Error>> {
     for i in &var_map {
         match i {
             RAP::Function(func) => {
-                println!("Function {}()", func.Name.as_ref().unwrap());
+                if func.Name != Some(String::from("main")) {
+                    println!("Function {}()", func.Name.as_ref().unwrap());
+                }
             },
             RAP::StaticRef(statref) => {
                 println!("StaticRef {}", statref.Name.as_ref().unwrap());
@@ -97,8 +101,8 @@ fn run() -> Result<(), Box<Error>> {
     Ok(())
 }
 
-fn get_info(ast: &syn::File) -> Vec<RAP> {
-    let mut var_def = Vec::new();
+fn get_info(ast: &syn::File) -> HashSet<RAP> {
+    let mut var_def = HashSet::new();
     //TODO: Scope analysis (ex. same variable name different scope)
     //TODO: separate different methods for parsing ownership in arguments and block expression??? draw diagrams
     for item in &ast.items {
@@ -107,20 +111,41 @@ fn get_info(ast: &syn::File) -> Vec<RAP> {
         // TODO: macros, const, enums, structs... we only consider functions here
         match item {
             Item::Fn(func) => {
-                info!("func found: {}", func.sig.ident);
-                var_def.push(RAP::Function(func_info{Name: Some(format!("{}", func.sig.ident))}));
+                debug!("func found: {}", func.sig.ident);
+                var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}", func.sig.ident))}));
                 if func.sig.inputs.len() != 0 {
                     for arg in &func.sig.inputs {
-                        info!("{:?}", arg); 
+                        // info!("{:?}", arg); 
                         match arg {
                             FnArg::Typed(PatType) => {
-                                var_def.push(RAP::Owner_info{Name: None, Mutability: false, Reference: false});
+                                let mut funcArg = OwnerInfo{Name: None, Mutability: false, Reference: false};
+                                match &*PatType.pat {
+                                    Pat::Ident(PatIdent) => {
+                                    // TODO: We are assuming that the reference and mutability info are after colon??
+                                        funcArg.Name=Some(String::from(format!("{}", PatIdent.ident)))
+                                    },
+                                    _ => info!("function arg name not supported")
+                                }
+                                //TODO: experiment on enum ownership... and if let ownership...
+                                match &*PatType.ty {
+                                    Type::Reference(TypeReference) => {
+                                        funcArg.Reference = true;
+                                        if let Some(mutability) = &TypeReference.mutability {
+                                            funcArg.Mutability = true;
+                                            var_def.insert(RAP::MutRef(funcArg));
+                                        } else {
+                                            var_def.insert(RAP::StaticRef(funcArg));
+                                        }
+                                    },
+                                    Type::Path(_) => {
+                                        var_def.insert(RAP::Owner(funcArg));
+                                    }
+                                    _ => info!("function arg type not supported")
+                                }
                             },
                             _ => info!("receiver not supported")
                         }
                     }
-                    // info!("{}", func.sig.inputs.len());
-
                 }
                 //TODO: add function argument
                 // func.sig.inputs
@@ -133,11 +158,11 @@ fn get_info(ast: &syn::File) -> Vec<RAP> {
                         Stmt::Local(loc) => {
                             // let statement
                             // save variable info
-                            let mut local = Owner_info{Name: None, Mutability: false, Reference: false};
+                            let mut local = OwnerInfo{Name: None, Mutability: false, Reference: false};
 
                             match &loc.pat {
                                 Pat::Ident(patident) => {
-                                    info!("Owner found: {}, mutability: {:?}, ref: {:?}", patident.ident, patident.mutability, patident.by_ref);
+                                    debug!("Owner found: {}, mutability: {:?}, ref: {:?}", patident.ident, patident.mutability, patident.by_ref);
                                     local.Name = Some(String::from(format!("{}", patident.ident)));
                                     // assume no 'ref' used here
                                     if let Some(mutable) = &patident.mutability {
@@ -146,7 +171,7 @@ fn get_info(ast: &syn::File) -> Vec<RAP> {
                                 },
                                 Pat::Reference(PatReference) => {
                                     if let Pat::Ident(PatIdent) = &*PatReference.pat {
-                                        info!("Reference found: {}, mutability: {:?}", PatIdent.ident, PatReference.mutability);
+                                        debug!("Reference found: {}, mutability: {:?}", PatIdent.ident, PatReference.mutability);
                                         local.Name = Some(String::from(format!("{}", PatIdent.ident)));
                                         if let Some(mutable) = &PatReference.mutability {
                                             local.Mutability = true;
@@ -166,19 +191,19 @@ fn get_info(ast: &syn::File) -> Vec<RAP> {
                                         if let Expr::Path(exprpath) = &*exprcall.func {
                                             //TODO: WTF is '&*'
                                             // println!("func found: {:?}", exprpath);
-                                            info!("func found: {}", path_fmt(&exprpath));
-                                            var_def.push(RAP::Function(func_info{Name: Some(format!("{}", path_fmt(&exprpath)))}));
+                                            debug!("func found: {}", path_fmt(&exprpath));
+                                            var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}", path_fmt(&exprpath)))}));
                                         }
                                     },
                                     Expr::Reference(expred) => {
-                                        info!("Owner's a reference: {:?}", expred.mutability);
+                                        debug!("Owner's a reference: {:?}", expred.mutability);
                                         local.Reference = true;
                                         if let Some(mutable) = &expred.mutability {
                                             local.Mutability = true;
                                         }
                                         if let Expr::Path(exprpath) = &*expred.expr {
                                             // println!("Ref target: {:?}", exprpath);
-                                            info!(" Ref target: {}", path_fmt(&exprpath));
+                                            debug!(" Ref target: {}", path_fmt(&exprpath));
                                         }
                                     },
                                     // do not care other right side experssion
@@ -187,15 +212,17 @@ fn get_info(ast: &syn::File) -> Vec<RAP> {
                             }
                             if local.Reference {
                                 if local.Mutability {
-                                    var_def.push(RAP::MutRef(local));
+                                    var_def.insert(RAP::MutRef(local));
                                 } else {
-                                    var_def.push(RAP::StaticRef(local));
+                                    var_def.insert(RAP::StaticRef(local));
                                 }
                             } else {
-                                var_def.push(RAP::Owner(local));
+                                var_def.insert(RAP::Owner(local));
                             }
                         },
                         Stmt::Semi(exp, semi) => {
+                            info!("{:?}", exp);
+                            info!("{:?}", semi);
                             // excution of function, no related owner/function info
                         }, 
                         _ => {
