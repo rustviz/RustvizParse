@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate quote;
 extern crate syn;
+extern crate clap;
 
 use core::fmt;
 use std::{error::Error, string};
@@ -18,6 +19,8 @@ use syn::Pat;
 use syn::Expr;
 use syn::FnArg;
 use syn::Type;
+
+use clap::{Arg, App, SubCommand};
 
 #[derive(Debug, Hash, PartialEq, Eq)]
 struct OwnerInfo {
@@ -51,9 +54,9 @@ fn path_fmt(exprpath : &syn::ExprPath) -> String {
     pathname[0..pathname.len()-2].to_string()
 }
 
-fn run() -> Result<(), Box<Error>> {    
-    let mut file = File::open("/Users/haochenz/Desktop/rustviz/src/examples/hatra1/main.rs")?;
-    // let mut file = File::open("/Users/haochenz/Desktop/rustviz/src/examples/hatra2/main.rs")?;
+fn run(FileName : &Path) -> Result<(), Box<Error>> {    
+    // let mut file = File::open("/Users/haochenz/Desktop/rustviz/src/examples/hatra1/main.rs")?;
+    let mut file = File::open(FileName)?;
     // let mut file = File::open("/Users/haochenz/Desktop/playgroud/parse/src/test.rs")?;
     let mut content = String::new();
     file.read_to_string(&mut content)?;
@@ -61,24 +64,38 @@ fn run() -> Result<(), Box<Error>> {
     debug!("{:#?}", ast);
 
     let var_map = get_info(&ast);
+
+    let path = Path::new("./test.txt");
+    let display = path.display();
+    let mut file = match File::create(&path) {
+        Err(why) => panic!("couldn't create {}: {}", display, why),
+        Ok(file) => file,
+    };
+    file.write_all("/* --- BEGIN Variable Definitions ---\n".as_bytes());
+
     for i in &var_map {
         match i {
             RAP::Function(func) => {
                 if func.Name != Some(String::from("main")) {
                     println!("Function {}()", func.Name.as_ref().unwrap());
+                    file.write_all(format!("Function {}();\n", func.Name.as_ref().unwrap()).as_bytes());
                 }
             },
             RAP::StaticRef(statref) => {
                 println!("StaticRef {}", statref.Name.as_ref().unwrap());
+                file.write_all(format!("StaticRef {};\n", statref.Name.as_ref().unwrap()).as_bytes());
             },
             RAP::MutRef(mutref) => {
                 println!("MutRef {}", mutref.Name.as_ref().unwrap());
+                file.write_all(format!("MutRef {};\n", mutref.Name.as_ref().unwrap()).as_bytes());
             },
             RAP::Owner(owner) => {
                 if owner.Mutability {
                     println!("Owner mut {}", owner.Name.as_ref().unwrap());
+                    file.write_all(format!("Owner mut {};\n", owner.Name.as_ref().unwrap()).as_bytes());
                 } else {
                     println!("Owner {}", owner.Name.as_ref().unwrap());
+                    file.write_all(format!("Owner {};\n", owner.Name.as_ref().unwrap()).as_bytes());
                 }
             },
             _ => {
@@ -86,6 +103,9 @@ fn run() -> Result<(), Box<Error>> {
             }
         }
     }
+    file.write_all("--- END Variable Definitions --- */\n".as_bytes());
+
+
     // create log file
     // if !Path::new("./parse_test.txt").exists() {
     //     println!("!exist");
@@ -222,8 +242,7 @@ fn get_info(ast: &syn::File) -> HashSet<RAP> {
                         },
                         Stmt::Semi(exp, semi) => {
                             info!("{:?}", exp);
-                            info!("{:?}", semi);
-                            // excution of function, no related owner/function info
+
                         }, 
                         _ => {
                             //TODO: expressions and extra item definition not supported, should be written recursively
@@ -240,5 +259,23 @@ fn get_info(ast: &syn::File) -> HashSet<RAP> {
 
 fn main() {
     env_logger::init();
-    let parse_res = run();
+    let matches = App::new("Rustviz Parse")
+                        //   .version("1.0")
+                        //   .author("Kevin K. <kbknapp@gmail.com>")
+                          .about("Parse Owners and Functions")
+                          .arg(Arg::with_name("target")
+                            //    .short("t")
+                            //    .long("target")
+                            //    .value_name("FILE")
+                               .help("Target file for parsing")
+                               .required(true)
+                               .takes_value(true))
+                        //   .arg(Arg::with_name("INPUT")
+                        //        .help("Sets the input file to use")
+                        //        .required(true)
+                        //        .index(1))
+                          .get_matches();
+    let file_name = Path::new(matches.value_of("target").unwrap());
+    // println!("{:?}", FileName);
+    let parse_res = run(file_name);
 }
