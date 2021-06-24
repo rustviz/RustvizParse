@@ -215,6 +215,12 @@ fn get_info(ast: &syn::File) -> HashSet<RAP> {
                                             var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}", path_fmt(&exprpath)))}));
                                         }
                                     },
+                                    Expr::MethodCall(exprmcall) => {
+                                        if let mCall = String::from(format!("{}", exprmcall.method)) {
+                                            debug!("func found: {}",  mCall);
+                                            var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}",  mCall))}));
+                                        }
+                                    },
                                     Expr::Reference(expred) => {
                                         debug!("Owner's a reference: {:?}", expred.mutability);
                                         local.Reference = true;

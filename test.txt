@@ -1,0 +1,11 @@
+/* --- BEGIN Variable Definitions ---
+Function String::from();
+Owner mut b;
+Function String::len();
+Owner a;
+Owner len2;
+Owner len1;
+StaticRef c;
+Function len();
+Owner s;
+--- END Variable Definitions --- */
