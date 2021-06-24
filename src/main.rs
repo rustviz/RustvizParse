@@ -63,7 +63,8 @@ fn run(FileName : &Path) -> Result<(), Box<Error>> {
     let ast = syn::parse_file(&content)?;
     debug!("{:#?}", ast);
 
-    let var_map = get_info(&ast);
+    let mut var_map = HashSet::new();
+    get_info(&ast, &mut var_map);
 
     let path = Path::new("./test.txt");
     let display = path.display();
@@ -121,8 +122,101 @@ fn run(FileName : &Path) -> Result<(), Box<Error>> {
     Ok(())
 }
 
-fn get_info(ast: &syn::File) -> HashSet<RAP> {
-    let mut var_def = HashSet::new();
+fn parse_stmt(stmt: &syn::Stmt, var_def: &mut HashSet<RAP>) {
+    // local => let statement
+    // Item => function definition, struct definition etc.
+    // Expr => Expression without semicolon (return...)
+    // Semi => Expression with semicolon
+    match stmt {
+        Stmt::Local(loc) => {
+            // let statement
+            // save variable info
+            let mut local = OwnerInfo{Name: None, Mutability: false, Reference: false};
+
+            match &loc.pat {
+                Pat::Ident(patident) => {
+                    debug!("Owner found: {}, mutability: {:?}, ref: {:?}", patident.ident, patident.mutability, patident.by_ref);
+                    local.Name = Some(String::from(format!("{}", patident.ident)));
+                    // assume no 'ref' used here
+                    if let Some(mutable) = &patident.mutability {
+                        local.Mutability = true;
+                    }
+                },
+                Pat::Reference(PatReference) => {
+                    if let Pat::Ident(PatIdent) = &*PatReference.pat {
+                        debug!("Reference found: {}, mutability: {:?}", PatIdent.ident, PatReference.mutability);
+                        local.Name = Some(String::from(format!("{}", PatIdent.ident)));
+                        if let Some(mutable) = &PatReference.mutability {
+                            local.Mutability = true;
+                        }
+                    }
+                }
+                //TODO: add Struct(PatStruct),
+                _ => info!("stmt not supported")
+            }
+            //if assigned
+            if let Some((eq, expr)) = &loc.init {
+                //TODO: only consider functions and refs
+                // what's the pattern?
+                // let mut num: () = expr;
+                match &**expr {
+                    Expr::Call(exprcall) => {
+                        if let Expr::Path(exprpath) = &*exprcall.func {
+                            //TODO: WTF is '&*'
+                            // println!("func found: {:?}", exprpath);
+                            debug!("func found: {}", path_fmt(&exprpath));
+                            var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}", path_fmt(&exprpath)))}));
+                        }
+                    },
+                    Expr::MethodCall(exprmcall) => {
+                        if let mCall = String::from(format!("{}", exprmcall.method)) {
+                            debug!("func found: {}",  mCall);
+                            var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}",  mCall))}));
+                        }
+                    },
+                    Expr::Reference(expred) => {
+                        debug!("Owner's a reference: {:?}", expred.mutability);
+                        local.Reference = true;
+                        if let Some(mutable) = &expred.mutability {
+                            local.Mutability = true;
+                        }
+                        if let Expr::Path(exprpath) = &*expred.expr {
+                            // println!("Ref target: {:?}", exprpath);
+                            debug!(" Ref target: {}", path_fmt(&exprpath));
+                        }
+                    },
+                    Expr::Block(exprblock) => {
+                        debug!("found block");
+                        for stmt in &exprblock.block.stmts {
+                            parse_stmt(&stmt, var_def);
+                        }
+                    },
+                    // do not care other right side experssion
+                    _ => info!("expr not supported")
+                }
+            }
+            if local.Reference {
+                if local.Mutability {
+                    var_def.insert(RAP::MutRef(local));
+                } else {
+                    var_def.insert(RAP::StaticRef(local));
+                }
+            } else {
+                var_def.insert(RAP::Owner(local));
+            }
+        },
+        Stmt::Semi(exp, semi) => {
+            info!("{:?}", exp);
+            //TODO: deal with semis?
+        }, 
+        _ => {
+            //TODO: expressions and extra item definition not supported, should be written recursively
+            info!("Expression (control flow) and Item definition not supported")
+        }
+    }
+}
+
+fn get_info(ast: &syn::File, var_def: &mut HashSet<RAP>) {
     //TODO: Scope analysis (ex. same variable name different scope)
     //TODO: separate different methods for parsing ownership in arguments and block expression??? draw diagrams
     for item in &ast.items {
@@ -170,97 +264,13 @@ fn get_info(ast: &syn::File) -> HashSet<RAP> {
                 //TODO: add function argument
                 // func.sig.inputs
                 for stmt in &func.block.stmts {
-                    // local => let statement
-                    // Item => function definition, struct definition etc.
-                    // Expr => Expression without semicolon (return...)
-                    // Semi => Expression with semicolon
-                    match stmt {
-                        Stmt::Local(loc) => {
-                            // let statement
-                            // save variable info
-                            let mut local = OwnerInfo{Name: None, Mutability: false, Reference: false};
-
-                            match &loc.pat {
-                                Pat::Ident(patident) => {
-                                    debug!("Owner found: {}, mutability: {:?}, ref: {:?}", patident.ident, patident.mutability, patident.by_ref);
-                                    local.Name = Some(String::from(format!("{}", patident.ident)));
-                                    // assume no 'ref' used here
-                                    if let Some(mutable) = &patident.mutability {
-                                        local.Mutability = true;
-                                    }
-                                },
-                                Pat::Reference(PatReference) => {
-                                    if let Pat::Ident(PatIdent) = &*PatReference.pat {
-                                        debug!("Reference found: {}, mutability: {:?}", PatIdent.ident, PatReference.mutability);
-                                        local.Name = Some(String::from(format!("{}", PatIdent.ident)));
-                                        if let Some(mutable) = &PatReference.mutability {
-                                            local.Mutability = true;
-                                        }
-                                    }
-                                }
-                                //TODO: add Struct(PatStruct),
-                                _ => info!("stmt not supported")
-                            }
-                            //if assigned
-                            if let Some((eq, expr)) = &loc.init {
-                                //TODO: only consider functions and refs
-                                // what's the pattern?
-                                // let mut num: () = expr;
-                                match &**expr {
-                                    Expr::Call(exprcall) => {
-                                        if let Expr::Path(exprpath) = &*exprcall.func {
-                                            //TODO: WTF is '&*'
-                                            // println!("func found: {:?}", exprpath);
-                                            debug!("func found: {}", path_fmt(&exprpath));
-                                            var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}", path_fmt(&exprpath)))}));
-                                        }
-                                    },
-                                    Expr::MethodCall(exprmcall) => {
-                                        if let mCall = String::from(format!("{}", exprmcall.method)) {
-                                            debug!("func found: {}",  mCall);
-                                            var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}",  mCall))}));
-                                        }
-                                    },
-                                    Expr::Reference(expred) => {
-                                        debug!("Owner's a reference: {:?}", expred.mutability);
-                                        local.Reference = true;
-                                        if let Some(mutable) = &expred.mutability {
-                                            local.Mutability = true;
-                                        }
-                                        if let Expr::Path(exprpath) = &*expred.expr {
-                                            // println!("Ref target: {:?}", exprpath);
-                                            debug!(" Ref target: {}", path_fmt(&exprpath));
-                                        }
-                                    },
-                                    // do not care other right side experssion
-                                    _ => info!("expr not supported")
-                                }
-                            }
-                            if local.Reference {
-                                if local.Mutability {
-                                    var_def.insert(RAP::MutRef(local));
-                                } else {
-                                    var_def.insert(RAP::StaticRef(local));
-                                }
-                            } else {
-                                var_def.insert(RAP::Owner(local));
-                            }
-                        },
-                        Stmt::Semi(exp, semi) => {
-                            info!("{:?}", exp);
-
-                        }, 
-                        _ => {
-                            //TODO: expressions and extra item definition not supported, should be written recursively
-                            info!("Expression (control flow) and Item definition not supported")
-                        }
-                    }
+                    parse_stmt(&stmt, var_def);
                 }
             },
             _ => info!("Item definition not supported")
         }
     }
-    var_def
+    // var_def
 }
 
 fn main() {
