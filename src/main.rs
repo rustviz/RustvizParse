@@ -1,13 +1,14 @@
-#[macro_use]
+// #[macro_use]
 extern crate quote;
 extern crate syn;
 extern crate clap;
 
-use core::fmt;
-use std::{error::Error, string};
+// use core::fmt;
+// use std::error::String;
+use std::error::Error;
 use std::fs::File;
 use std::io::Read;
-use log::{debug, error, log_enabled, info, Level};
+use log::{debug, info};
 // use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
@@ -134,19 +135,19 @@ fn parse_stmt(stmt: &syn::Stmt, var_def: &mut HashSet<RAP>) {
             let mut local = OwnerInfo{Name: None, Mutability: false, Reference: false};
 
             match &loc.pat {
-                Pat::Ident(patident) => {
-                    debug!("Owner found: {}, mutability: {:?}, ref: {:?}", patident.ident, patident.mutability, patident.by_ref);
-                    local.Name = Some(String::from(format!("{}", patident.ident)));
+                Pat::Ident(pat_ident) => {
+                    debug!("Owner found: {}, mutability: {:?}, ref: {:?}", pat_ident.ident, pat_ident.mutability, pat_ident.by_ref);
+                    local.Name = Some(String::from(format!("{}", pat_ident.ident)));
                     // assume no 'ref' used here
-                    if let Some(mutable) = &patident.mutability {
+                    if let Some(_mutable) = &pat_ident.mutability {
                         local.Mutability = true;
                     }
                 },
-                Pat::Reference(PatReference) => {
-                    if let Pat::Ident(PatIdent) = &*PatReference.pat {
-                        debug!("Reference found: {}, mutability: {:?}", PatIdent.ident, PatReference.mutability);
-                        local.Name = Some(String::from(format!("{}", PatIdent.ident)));
-                        if let Some(mutable) = &PatReference.mutability {
+                Pat::Reference(pat_reference) => {
+                    if let Pat::Ident(pat_ident) = &*pat_reference.pat {
+                        debug!("Reference found: {}, mutability: {:?}", pat_ident.ident, pat_reference.mutability);
+                        local.Name = Some(String::from(format!("{}", pat_ident.ident)));
+                        if let Some(_mutable) = &pat_reference.mutability {
                             local.Mutability = true;
                         }
                     }
@@ -155,7 +156,7 @@ fn parse_stmt(stmt: &syn::Stmt, var_def: &mut HashSet<RAP>) {
                 _ => info!("stmt not supported")
             }
             //if assigned
-            if let Some((eq, expr)) = &loc.init {
+            if let Some((_eq, expr)) = &loc.init {
                 //TODO: only consider functions and refs
                 // what's the pattern?
                 // let mut num: () = expr;
@@ -168,16 +169,16 @@ fn parse_stmt(stmt: &syn::Stmt, var_def: &mut HashSet<RAP>) {
                             var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}", path_fmt(&exprpath)))}));
                         }
                     },
-                    Expr::MethodCall(exprmcall) => {
-                        if let mCall = String::from(format!("{}", exprmcall.method)) {
-                            debug!("func found: {}",  mCall);
-                            var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}",  mCall))}));
+                    Expr::MethodCall(exprm_call) => {
+                        if let m_call = String::from(format!("{}", exprm_call.method)) {
+                            debug!("func found: {}",  m_call);
+                            var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}",  m_call))}));
                         }
                     },
                     Expr::Reference(expred) => {
                         debug!("Owner's a reference: {:?}", expred.mutability);
                         local.Reference = true;
-                        if let Some(mutable) = &expred.mutability {
+                        if let Some(_mutable) = &expred.mutability {
                             local.Mutability = true;
                         }
                         if let Expr::Path(exprpath) = &*expred.expr {
@@ -205,7 +206,20 @@ fn parse_stmt(stmt: &syn::Stmt, var_def: &mut HashSet<RAP>) {
                 var_def.insert(RAP::Owner(local));
             }
         },
-        Stmt::Semi(exp, semi) => {
+        Stmt::Semi(exp, _semi) => {
+            match exp {
+                Expr::Macro(_macro) => {
+                    debug!("found macro");
+                    let macro_path = &_macro.mac.path;
+                    if let Some(macro_func) = macro_path.segments.first() {
+                        debug!("found {}", macro_func.ident);
+                        var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}", macro_func.ident))}));
+                    }
+                }
+                _ => {
+                    debug!("not supported");
+                }
+            }
             info!("{:?}", exp);
             //TODO: deal with semis?
         }, 
@@ -231,28 +245,28 @@ fn get_info(ast: &syn::File, var_def: &mut HashSet<RAP>) {
                     for arg in &func.sig.inputs {
                         // info!("{:?}", arg); 
                         match arg {
-                            FnArg::Typed(PatType) => {
-                                let mut funcArg = OwnerInfo{Name: None, Mutability: false, Reference: false};
-                                match &*PatType.pat {
-                                    Pat::Ident(PatIdent) => {
+                            FnArg::Typed(pat_type) => {
+                                let mut func_arg = OwnerInfo{Name: None, Mutability: false, Reference: false};
+                                match &*pat_type.pat {
+                                    Pat::Ident(pat_ident) => {
                                     // TODO: We are assuming that the reference and mutability info are after colon??
-                                        funcArg.Name=Some(String::from(format!("{}", PatIdent.ident)))
+                                        func_arg.Name=Some(String::from(format!("{}", pat_ident.ident)))
                                     },
                                     _ => info!("function arg name not supported")
                                 }
                                 //TODO: experiment on enum ownership... and if let ownership...
-                                match &*PatType.ty {
-                                    Type::Reference(TypeReference) => {
-                                        funcArg.Reference = true;
-                                        if let Some(mutability) = &TypeReference.mutability {
-                                            funcArg.Mutability = true;
-                                            var_def.insert(RAP::MutRef(funcArg));
+                                match &*pat_type.ty {
+                                    Type::Reference(type_reference) => {
+                                        func_arg.Reference = true;
+                                        if let Some(_mutability) = &type_reference.mutability {
+                                            func_arg.Mutability = true;
+                                            var_def.insert(RAP::MutRef(func_arg));
                                         } else {
-                                            var_def.insert(RAP::StaticRef(funcArg));
+                                            var_def.insert(RAP::StaticRef(func_arg));
                                         }
                                     },
                                     Type::Path(_) => {
-                                        var_def.insert(RAP::Owner(funcArg));
+                                        var_def.insert(RAP::Owner(func_arg));
                                     }
                                     _ => info!("function arg type not supported")
                                 }
