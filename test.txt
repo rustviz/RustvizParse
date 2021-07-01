@@ -1,15 +1,16 @@
 /* --- BEGIN Variable Definitions ---
-Owner len1;
-Owner len2;
-Owner a;
-Function println();
-Owner s;
-Owner y;
-Owner z;
-Owner x;
-Function String::len();
 StaticRef c;
-Function len();
+Owner len1;
+Owner x;
+Owner s;
+Owner len2;
+Function assert();
 Owner mut b;
+Owner _z;
+Function len();
+Owner _a;
+Owner y;
+Function println();
 Function String::from();
+Function String::len();
 --- END Variable Definitions --- */
