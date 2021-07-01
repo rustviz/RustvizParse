@@ -1,16 +1,16 @@
 /* --- BEGIN Variable Definitions ---
-StaticRef c;
-Owner len1;
-Owner x;
-Owner s;
-Owner len2;
+Function call();
 Function assert();
-Owner mut b;
-Owner _z;
-Function len();
-Owner _a;
-Owner y;
-Function println();
-Function String::from();
 Function String::len();
+Owner mut b;
+Owner y;
+Owner len2;
+Owner _z;
+Owner len1;
+Function len();
+Function String::from();
+StaticRef c;
+Owner s;
+Owner _a;
+Owner x;
 --- END Variable Definitions --- */

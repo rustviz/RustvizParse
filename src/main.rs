@@ -2,6 +2,7 @@
 extern crate quote;
 extern crate syn;
 extern crate clap;
+extern crate proc_macro2;
 
 // use core::fmt;
 // use std::error::String;
@@ -20,6 +21,9 @@ use syn::Pat;
 use syn::Expr;
 use syn::FnArg;
 use syn::Type;
+
+
+use proc_macro2::TokenStream;
 
 use clap::{Arg, App, SubCommand};
 
@@ -123,6 +127,60 @@ fn run(FileName : &Path) -> Result<(), Box<Error>> {
     Ok(())
 }
 
+fn parse_expr(expr: &syn::Expr, local: &mut OwnerInfo, var_def: &mut HashSet<RAP>) {
+    match expr {
+        Expr::Call(exprcall) => {
+            if let Expr::Path(exprpath) = &*exprcall.func {
+                //TODO: WTF is '&*'
+                // println!("func found: {:?}", exprpath);
+                debug!("func found: {}", path_fmt(&exprpath));
+                var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}", path_fmt(&exprpath)))}));
+            }
+        },
+        Expr::MethodCall(exprm_call) => {
+            if let m_call = String::from(format!("{}", exprm_call.method)) {
+                debug!("func found: {}",  m_call);
+                var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}",  m_call))}));
+            }
+        },
+        Expr::Reference(expred) => {
+            debug!("Owner's a reference: {:?}", expred.mutability);
+            local.Reference = true;
+            if let Some(_mutable) = &expred.mutability {
+                local.Mutability = true;
+            }
+            if let Expr::Path(exprpath) = &*expred.expr {
+                // println!("Ref target: {:?}", exprpath);
+                debug!(" Ref target: {}", path_fmt(&exprpath));
+            }
+        },
+        Expr::Block(expr_block) => {
+            debug!("found block");
+            for stmt in &expr_block.block.stmts {
+                parse_stmt(&stmt, var_def);
+            }
+        },
+        Expr::Macro(_macro) => {
+            debug!("found macro");
+            let macro_path = &_macro.mac.path;
+            if let Some(macro_func) = macro_path.segments.first() {
+                debug!("found {}", macro_func.ident);
+                var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}", macro_func.ident))}));
+            }
+            let input = _macro.mac.tokens.clone();
+            let mut content = "fn main(){".to_owned();
+            content.push_str(&input.to_string());
+            content.push_str(&"}".to_owned());
+            debug!("found macro statement: *{}*", content);
+            let sub_ast = syn::parse_file(&content).unwrap();
+            debug!("{:#?}", sub_ast);
+            get_info(&sub_ast, var_def);
+        },
+        // do not care other right side experssion
+        _ => info!("expr not supported")
+    }
+}
+
 fn parse_stmt(stmt: &syn::Stmt, var_def: &mut HashSet<RAP>) {
     // local => let statement
     // Item => function definition, struct definition etc.
@@ -160,41 +218,7 @@ fn parse_stmt(stmt: &syn::Stmt, var_def: &mut HashSet<RAP>) {
                 //TODO: only consider functions and refs
                 // what's the pattern?
                 // let mut num: () = expr;
-                match &**expr {
-                    Expr::Call(exprcall) => {
-                        if let Expr::Path(exprpath) = &*exprcall.func {
-                            //TODO: WTF is '&*'
-                            // println!("func found: {:?}", exprpath);
-                            debug!("func found: {}", path_fmt(&exprpath));
-                            var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}", path_fmt(&exprpath)))}));
-                        }
-                    },
-                    Expr::MethodCall(exprm_call) => {
-                        if let m_call = String::from(format!("{}", exprm_call.method)) {
-                            debug!("func found: {}",  m_call);
-                            var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}",  m_call))}));
-                        }
-                    },
-                    Expr::Reference(expred) => {
-                        debug!("Owner's a reference: {:?}", expred.mutability);
-                        local.Reference = true;
-                        if let Some(_mutable) = &expred.mutability {
-                            local.Mutability = true;
-                        }
-                        if let Expr::Path(exprpath) = &*expred.expr {
-                            // println!("Ref target: {:?}", exprpath);
-                            debug!(" Ref target: {}", path_fmt(&exprpath));
-                        }
-                    },
-                    Expr::Block(exprblock) => {
-                        debug!("found block");
-                        for stmt in &exprblock.block.stmts {
-                            parse_stmt(&stmt, var_def);
-                        }
-                    },
-                    // do not care other right side experssion
-                    _ => info!("expr not supported")
-                }
+                parse_expr(expr, &mut local, var_def);
             }
             if local.Reference {
                 if local.Mutability {
@@ -207,22 +231,37 @@ fn parse_stmt(stmt: &syn::Stmt, var_def: &mut HashSet<RAP>) {
             }
         },
         Stmt::Semi(exp, _semi) => {
-            match exp {
-                Expr::Macro(_macro) => {
-                    debug!("found macro");
-                    let macro_path = &_macro.mac.path;
-                    if let Some(macro_func) = macro_path.segments.first() {
-                        debug!("found {}", macro_func.ident);
-                        var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}", macro_func.ident))}));
-                    }
-                }
-                _ => {
-                    debug!("not supported");
-                }
-            }
+            // match exp {
+            //     Expr::Macro(_macro) => {
+            //         debug!("found macro");
+            //         let macro_path = &_macro.mac.path;
+            //         if let Some(macro_func) = macro_path.segments.first() {
+            //             debug!("found {}", macro_func.ident);
+            //             var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}", macro_func.ident))}));
+            //         }
+            //         let input = _macro.mac.tokens.clone();
+            //         let mut content = "fn main(){".to_owned();
+            //         content.push_str(&input.to_string());
+            //         content.push_str(&"}".to_owned());
+            //         debug!("found macro statement: *{}*", content);
+            //         let sub_ast = syn::parse_file(&content).unwrap();
+            //         debug!("{:#?}", sub_ast);
+            //         get_info(&sub_ast, var_def);
+            //     }
+            //     _ => {
+            //         debug!("not supported");
+            //     }
+            // }
+            let mut local = OwnerInfo{Name: None, Mutability: false, Reference: false};
+            parse_expr(exp, &mut local, var_def);
             info!("{:?}", exp);
             //TODO: deal with semis?
         }, 
+        Stmt::Expr(exp) => {
+            let mut local = OwnerInfo{Name: None, Mutability: false, Reference: false};
+            parse_expr(exp, &mut local, var_def);
+            info!("{:?}", exp);
+        },
         _ => {
             //TODO: expressions and extra item definition not supported, should be written recursively
             info!("Expression (control flow) and Item definition not supported")

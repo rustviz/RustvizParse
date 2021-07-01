@@ -6,13 +6,13 @@ fn main() {
     let s = String::from("hello");
     let len1 = String::len(&s);
     let len2 = s.len(); // shorthand for the above
-    assert!(b!=3);
-    println!("len1 = {} = len2 = {}", len1, len2);
+    assert!(call(a));
+    // println!("len1 = {} = len2 = {}", len1, len2);
     let x = String::from("hello");
     let _z = {
         let y = x;
-        println!("{}", y);
+        // println!("{}", y);
         // ...
     };
-    println!("Hello, world!");
+    // println!("Hello, world!");
 }
