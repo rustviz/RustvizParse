@@ -21,6 +21,7 @@ use syn::Pat;
 use syn::Expr;
 use syn::FnArg;
 use syn::Type;
+use std::iter::FromIterator;
 
 
 use proc_macro2::TokenStream;
@@ -127,7 +128,7 @@ fn run(FileName : &Path) -> Result<(), Box<Error>> {
     Ok(())
 }
 
-fn parse_expr(expr: &syn::Expr, local: &mut OwnerInfo, var_def: &mut HashSet<RAP>) {
+fn parse_expr (expr: &syn::Expr, local: &mut OwnerInfo, var_def: &mut HashSet<RAP>) {
     match expr {
         Expr::Call(exprcall) => {
             if let Expr::Path(exprpath) = &*exprcall.func {
@@ -165,16 +166,44 @@ fn parse_expr(expr: &syn::Expr, local: &mut OwnerInfo, var_def: &mut HashSet<RAP
             let macro_path = &_macro.mac.path;
             if let Some(macro_func) = macro_path.segments.first() {
                 debug!("found {}", macro_func.ident);
-                var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}", macro_func.ident))}));
+                //TODO: only consider Println and assert here
+                if (macro_func.ident.to_string() == "println") {
+                    var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}", macro_func.ident))}));
+                    let mut tokentree_buff = Vec::new();
+                    let mut first_lit = false;
+                    for item in _macro.mac.tokens.clone() {
+                        debug!("{:?}",item);
+                        match item {
+                            proc_macro2::TokenTree::Punct(punct) => {
+                                if (!first_lit) {
+                                    // dump "{:?...}" in println!()
+                                    tokentree_buff.clear();
+                                    first_lit = true;
+                                } else {
+                                    let mut tokenstream_buff = proc_macro2::TokenStream::new();
+                                    tokenstream_buff.extend(tokentree_buff);
+                                    let res: Result<syn::Expr, syn::Error> = syn::parse2(tokenstream_buff);
+                                    match res {
+                                        Ok(exp) => parse_expr(&exp, local, var_def),
+                                        Err(e) => debug!("Assert macro parse error"),
+                                    }
+                                    tokentree_buff = Vec::new();
+                                }
+                            }
+                            _ => {
+                                tokentree_buff.push(item);
+                            }
+                        }
+                    }
+                } else {
+                    let res: Result<syn::Expr, syn::Error> = syn::parse2(_macro.mac.tokens.clone());
+                    match res {
+                        Ok(exp) => parse_expr(&exp, local, var_def),
+                        Err(e) => debug!("Assert macro parse error"),
+                    }
+                    // parse_expr(res, local, var_def);
+                }
             }
-            let input = _macro.mac.tokens.clone();
-            let mut content = "fn main(){".to_owned();
-            content.push_str(&input.to_string());
-            content.push_str(&"}".to_owned());
-            debug!("found macro statement: *{}*", content);
-            let sub_ast = syn::parse_file(&content).unwrap();
-            debug!("{:#?}", sub_ast);
-            get_info(&sub_ast, var_def);
         },
         // do not care other right side experssion
         _ => info!("expr not supported")
