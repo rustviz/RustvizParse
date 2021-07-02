@@ -185,7 +185,7 @@ fn parse_expr (expr: &syn::Expr, local: &mut OwnerInfo, var_def: &mut HashSet<RA
                                     let res: Result<syn::Expr, syn::Error> = syn::parse2(tokenstream_buff);
                                     match res {
                                         Ok(exp) => parse_expr(&exp, local, var_def),
-                                        Err(e) => debug!("Assert macro parse error"),
+                                        Err(_) => debug!("Assert macro parse error"),
                                     }
                                     tokentree_buff = Vec::new();
                                 }
@@ -195,11 +195,18 @@ fn parse_expr (expr: &syn::Expr, local: &mut OwnerInfo, var_def: &mut HashSet<RA
                             }
                         }
                     }
+                    let mut tokenstream_buff = proc_macro2::TokenStream::new();
+                    tokenstream_buff.extend(tokentree_buff);
+                    let res: Result<syn::Expr, syn::Error> = syn::parse2(tokenstream_buff);
+                    match res {
+                        Ok(exp) => parse_expr(&exp, local, var_def),
+                        Err(_) => debug!("Assert macro parse error"),
+                    }
                 } else {
                     let res: Result<syn::Expr, syn::Error> = syn::parse2(_macro.mac.tokens.clone());
                     match res {
                         Ok(exp) => parse_expr(&exp, local, var_def),
-                        Err(e) => debug!("Assert macro parse error"),
+                        Err(_) => debug!("Assert macro parse error"),
                     }
                     // parse_expr(res, local, var_def);
                 }
