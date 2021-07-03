@@ -168,7 +168,7 @@ fn parse_expr (expr: &syn::Expr, local: &mut OwnerInfo, var_def: &mut HashSet<RA
                 debug!("found {}", macro_func.ident);
                 //TODO: only consider Println and assert here
                 if (macro_func.ident.to_string() == "println") {
-                    var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}", macro_func.ident))}));
+                    var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}!", macro_func.ident))}));
                     let mut tokentree_buff = Vec::new();
                     let mut first_lit = false;
                     for item in _macro.mac.tokens.clone() {
