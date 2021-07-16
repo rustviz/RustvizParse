@@ -2,11 +2,13 @@ use syn::{Stmt, Expr, Pat, Item, FnArg, Type, File};
 use log::{debug, info};
 use std::collections::HashSet;
 
+//temp fix
 #[derive(Debug, Hash, PartialEq, Eq)]
 struct OwnerInfo {
     Name: Option<String>,
     Reference: bool,
-    Mutability: bool
+    Mutability: bool,
+    Fields: Option<Vec<String>>,
 }
 
 #[derive(Debug, Hash, PartialEq, Eq)]
@@ -19,7 +21,7 @@ enum RAP {
     Owner(OwnerInfo),
     MutRef(OwnerInfo),
     StaticRef(OwnerInfo),
-    // Struct(),
+    Struct(OwnerInfo),
     Function(FuncInfo),
 }
 
@@ -42,27 +44,31 @@ pub fn str_gen(ast: File) -> String {
         match i {
             RAP::Function(func) => {
                 if func.Name != Some(String::from("main")) {
-                    println!("Function {}()", func.Name.as_ref().unwrap());
                     header.push_str(&format!("Function {}();\n", func.Name.as_ref().unwrap()));
                 }
             },
             RAP::StaticRef(statref) => {
-                println!("StaticRef {}", statref.Name.as_ref().unwrap());
                 header.push_str(&format!("StaticRef {};\n", statref.Name.as_ref().unwrap()));
             },
             RAP::MutRef(mutref) => {
-                println!("MutRef {}", mutref.Name.as_ref().unwrap());
                 header.push_str(&format!("MutRef {};\n", mutref.Name.as_ref().unwrap()));
             },
             RAP::Owner(owner) => {
                 if owner.Mutability {
-                    println!("Owner mut {}", owner.Name.as_ref().unwrap());
                     header.push_str(&format!("Owner mut {};\n", owner.Name.as_ref().unwrap()));
                 } else {
-                    println!("Owner {}", owner.Name.as_ref().unwrap());
                     header.push_str(&format!("Owner {};\n", owner.Name.as_ref().unwrap()));
                 }
             },
+            RAP::Struct(stut) => {
+                // Struct r{w, h};
+                header.push_str(&format!("Struct {}{{", stut.Name.as_ref().unwrap()));
+                for i in stut.Fields.unwrap() {
+                    header.push_str(&format!("{},",i));
+                }
+                header.pop();
+                header.push_str("};\n");
+            }
             _ => {
                 println!("not implemented")
             }
@@ -88,7 +94,7 @@ fn get_info(ast: &File, var_def: &mut HashSet<RAP>) {
                         // info!("{:?}", arg); 
                         match arg {
                             FnArg::Typed(pat_type) => {
-                                let mut func_arg = OwnerInfo{Name: None, Mutability: false, Reference: false};
+                                let mut func_arg = OwnerInfo{Name: None, Mutability: false, Reference: false, Fields: None};
                                 match &*pat_type.pat {
                                     Pat::Ident(pat_ident) => {
                                     // TODO: We are assuming that the reference and mutability info are after colon??
@@ -162,6 +168,21 @@ fn parse_expr (expr: &syn::Expr, local: &mut OwnerInfo, var_def: &mut HashSet<RA
                 parse_stmt(&stmt, var_def);
             }
         },
+        Expr::Struct(expr_struct) => {
+            debug!("found struct");
+            let mut field_vec = Vec::new();
+            for i in &expr_struct.fields {
+                match &i.member {
+                    syn::Member::Named(Ident) => {
+                        field_vec.push(format!("{}",Ident));
+                    }
+                    _ => {
+                        //TODO: do not take care of pair struct
+                    }
+                }
+            }
+            local.Fields = Some(field_vec);
+        },
         Expr::Macro(_macro) => {
             debug!("found macro");
             let macro_path = &_macro.mac.path;
@@ -223,12 +244,11 @@ fn parse_stmt(stmt: &syn::Stmt, var_def: &mut HashSet<RAP>) {
     // Item => function definition, struct definition etc.
     // Expr => Expression without semicolon (return...)
     // Semi => Expression with semicolon
+    let mut local = OwnerInfo{Name: None, Mutability: false, Reference: false, Fields: None};
     match stmt {
         Stmt::Local(loc) => {
             // let statement
             // save variable info
-            let mut local = OwnerInfo{Name: None, Mutability: false, Reference: false};
-
             match &loc.pat {
                 Pat::Ident(pat_ident) => {
                     debug!("Owner found: {}, mutability: {:?}, ref: {:?}", pat_ident.ident, pat_ident.mutability, pat_ident.by_ref);
@@ -238,6 +258,8 @@ fn parse_stmt(stmt: &syn::Stmt, var_def: &mut HashSet<RAP>) {
                         local.Mutability = true;
                     }
                 },
+                //for inference type we are only specifying reference
+                //TODO: all other types could be infer after the eq sign??
                 Pat::Reference(pat_reference) => {
                     if let Pat::Ident(pat_ident) = &*pat_reference.pat {
                         debug!("Reference found: {}, mutability: {:?}", pat_ident.ident, pat_reference.mutability);
@@ -246,8 +268,8 @@ fn parse_stmt(stmt: &syn::Stmt, var_def: &mut HashSet<RAP>) {
                             local.Mutability = true;
                         }
                     }
-                }
-                //TODO: add Struct(PatStruct),
+                },
+                //TODO: support eg: Type(a:i32) if it's needed
                 _ => info!("stmt not supported")
             }
             //if assigned
@@ -257,45 +279,30 @@ fn parse_stmt(stmt: &syn::Stmt, var_def: &mut HashSet<RAP>) {
                 // let mut num: () = expr;
                 parse_expr(expr, &mut local, var_def);
             }
-            if local.Reference {
-                if local.Mutability {
-                    var_def.insert(RAP::MutRef(local));
-                } else {
-                    var_def.insert(RAP::StaticRef(local));
+
+            match local.Fields {
+                Some(_) => {
+                    var_def.insert(RAP::Struct(local));
+                },
+                _ => {
+                    if local.Reference {
+                        if local.Mutability {
+                            var_def.insert(RAP::MutRef(local));
+                        } else {
+                            var_def.insert(RAP::StaticRef(local));
+                        }
+                    } else {
+                        var_def.insert(RAP::Owner(local));
+                    }
                 }
-            } else {
-                var_def.insert(RAP::Owner(local));
             }
         },
         Stmt::Semi(exp, _semi) => {
-            // match exp {
-            //     Expr::Macro(_macro) => {
-            //         debug!("found macro");
-            //         let macro_path = &_macro.mac.path;
-            //         if let Some(macro_func) = macro_path.segments.first() {
-            //             debug!("found {}", macro_func.ident);
-            //             var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}", macro_func.ident))}));
-            //         }
-            //         let input = _macro.mac.tokens.clone();
-            //         let mut content = "fn main(){".to_owned();
-            //         content.push_str(&input.to_string());
-            //         content.push_str(&"}".to_owned());
-            //         debug!("found macro statement: *{}*", content);
-            //         let sub_ast = syn::parse_file(&content).unwrap();
-            //         debug!("{:#?}", sub_ast);
-            //         get_info(&sub_ast, var_def);
-            //     }
-            //     _ => {
-            //         debug!("not supported");
-            //     }
-            // }
-            let mut local = OwnerInfo{Name: None, Mutability: false, Reference: false};
             parse_expr(exp, &mut local, var_def);
             info!("{:?}", exp);
             //TODO: deal with semis?
         }, 
         Stmt::Expr(exp) => {
-            let mut local = OwnerInfo{Name: None, Mutability: false, Reference: false};
             parse_expr(exp, &mut local, var_def);
             info!("{:?}", exp);
         },

@@ -27,7 +27,6 @@ fn parse(FileName : &PathBuf) -> Result<String, Box<Error>> {
     let ast = syn::parse_file(&content)?;
     debug!("{:#?}", ast);
     let header = parse::str_gen(ast);
-    println!("{}", header);
     Ok(header)
 }
 
