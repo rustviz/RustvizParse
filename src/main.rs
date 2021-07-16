@@ -18,18 +18,6 @@ use clap::{Arg, App};
 
 mod parse;
 
-fn parse(FileName : &PathBuf) -> Result<String, Box<Error>> {    
-    // let mut file = File::open("/Users/haochenz/Desktop/rustviz/src/examples/hatra1/main.rs")?;
-    let mut file = File::open(FileName)?;
-    // let mut file = File::open("/Users/haochenz/Desktop/playgroud/parse/src/test.rs")?;
-    let mut content = String::new();
-    file.read_to_string(&mut content)?;
-    let ast = syn::parse_file(&content)?;
-    debug!("{:#?}", ast);
-    let header = parse::str_gen(ast);
-    Ok(header)
-}
-
 fn main() {
     env_logger::init();
     let matches = App::new("Rustviz Parse")
@@ -50,6 +38,6 @@ fn main() {
                           .get_matches();
     let file_name = PathBuf::from(matches.value_of("target").unwrap());
     // println!("{:?}", FileName);
-    let parse_res = parse(&file_name);
+    let parse_res = parse::parse(&file_name);
     println!("{}", parse_res.unwrap());
 }

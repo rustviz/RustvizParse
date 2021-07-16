@@ -1,6 +1,10 @@
-use syn::{Stmt, Expr, Pat, Item, FnArg, Type, File};
+use syn::{Stmt, Expr, Pat, Item, FnArg, Type};
 use log::{debug, info};
 use std::collections::HashSet;
+use std::error::Error;
+use std::fs::File;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
 //temp fix
 #[derive(Debug, Hash, PartialEq, Eq)]
@@ -35,7 +39,19 @@ fn path_fmt(exprpath : &syn::ExprPath) -> String {
     pathname[0..pathname.len()-2].to_string()
 }
 
-pub fn str_gen(ast: File) -> String {
+pub fn parse(FileName : &PathBuf) -> Result<String, Box<Error>> {    
+    // let mut file = File::open("/Users/haochenz/Desktop/rustviz/src/examples/hatra1/main.rs")?;
+    let mut file = File::open(FileName)?;
+    // let mut file = File::open("/Users/haochenz/Desktop/playgroud/parse/src/test.rs")?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)?;
+    let ast = syn::parse_file(&content)?;
+    debug!("{:#?}", ast);
+    let header = str_gen(ast);
+    Ok(header)
+}
+
+fn str_gen(ast: syn::File) -> String {
     let mut var_map = HashSet::new();
     get_info(&ast, &mut var_map);
     let mut header = String::new();
@@ -78,7 +94,7 @@ pub fn str_gen(ast: File) -> String {
     header
 }
 
-fn get_info(ast: &File, var_def: &mut HashSet<RAP>) {
+fn get_info(ast: &syn::File, var_def: &mut HashSet<RAP>) {
     //TODO: Scope analysis (ex. same variable name different scope)
     //TODO: separate different methods for parsing ownership in arguments and block expression??? draw diagrams
     for item in &ast.items {
