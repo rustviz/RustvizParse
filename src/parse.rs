@@ -4,7 +4,8 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::fs::File;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use syn::spanned::Spanned;
 
 //temp fix
 #[derive(Debug, Hash, PartialEq, Eq)]
@@ -103,22 +104,31 @@ fn get_info(ast: &syn::File, var_def: &mut HashSet<RAP>) {
         // TODO: macros, const, enums, structs... we only consider functions here
         match item {
             Item::Fn(func) => {
+                debug!("--------------");
                 debug!("func found: {}", func.sig.ident);
+                // debug!("{:?}", func.span().source_file());
+                debug!("{:?}", func.span().start());
+                debug!("{:?}", func.span().end());
+                debug!("--------------");
                 var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}", func.sig.ident))}));
                 if func.sig.inputs.len() != 0 {
                     for arg in &func.sig.inputs {
-                        // info!("{:?}", arg); 
+                        //match arguments
                         match arg {
                             FnArg::Typed(pat_type) => {
                                 let mut func_arg = OwnerInfo{Name: None, Mutability: false, Reference: false, Fields: None};
+                                debug!("--------------");
                                 match &*pat_type.pat {
                                     Pat::Ident(pat_ident) => {
                                     // TODO: We are assuming that the reference and mutability info are after colon??
-                                        func_arg.Name=Some(String::from(format!("{}", pat_ident.ident)))
+                                        func_arg.Name=Some(String::from(format!("{}", pat_ident.ident)));
+                                        debug!("arg found: {:?}", func_arg.Name);
                                     },
                                     _ => info!("function arg name not supported")
                                 }
-                                //TODO: experiment on enum ownership... and if let ownership...
+                                debug!("{:?}", pat_type.span().start());
+                                debug!("{:?}", pat_type.span().end());
+                                debug!("--------------");
                                 match &*pat_type.ty {
                                     Type::Reference(type_reference) => {
                                         func_arg.Reference = true;
@@ -152,12 +162,13 @@ fn get_info(ast: &syn::File, var_def: &mut HashSet<RAP>) {
 }
 
 fn parse_expr (expr: &syn::Expr, local: &mut OwnerInfo, var_def: &mut HashSet<RAP>) {
+    debug!("--------------");
+    debug!("expr found");
     match expr {
         Expr::Call(exprcall) => {
             if let Expr::Path(exprpath) = &*exprcall.func {
                 //TODO: WTF is '&*'
                 // println!("func found: {:?}", exprpath);
-                debug!("func found: {}", path_fmt(&exprpath));
                 var_def.insert(RAP::Function(FuncInfo{Name: Some(format!("{}", path_fmt(&exprpath)))}));
             }
         },
@@ -253,6 +264,9 @@ fn parse_expr (expr: &syn::Expr, local: &mut OwnerInfo, var_def: &mut HashSet<RA
         // do not care other right side experssion
         _ => info!("expr not supported")
     }
+    debug!("{:?}", expr.span().start());
+    debug!("{:?}", expr.span().end());
+    debug!("--------------");
 }
 
 fn parse_stmt(stmt: &syn::Stmt, var_def: &mut HashSet<RAP>) {
@@ -260,6 +274,8 @@ fn parse_stmt(stmt: &syn::Stmt, var_def: &mut HashSet<RAP>) {
     // Item => function definition, struct definition etc.
     // Expr => Expression without semicolon (return...)
     // Semi => Expression with semicolon
+    debug!("--------------");
+    debug!("stmt found");
     let mut local = OwnerInfo{Name: None, Mutability: false, Reference: false, Fields: None};
     match stmt {
         Stmt::Local(loc) => {
@@ -268,6 +284,8 @@ fn parse_stmt(stmt: &syn::Stmt, var_def: &mut HashSet<RAP>) {
             match &loc.pat {
                 Pat::Ident(pat_ident) => {
                     debug!("Owner found: {}, mutability: {:?}, ref: {:?}", pat_ident.ident, pat_ident.mutability, pat_ident.by_ref);
+                    debug!("{:?}", pat_ident.ident.span().start());
+                    debug!("{:?}", pat_ident.ident.span().end());
                     local.Name = Some(String::from(format!("{}", pat_ident.ident)));
                     // assume no 'ref' used here
                     if let Some(_mutable) = &pat_ident.mutability {
@@ -327,4 +345,7 @@ fn parse_stmt(stmt: &syn::Stmt, var_def: &mut HashSet<RAP>) {
             info!("Expression (control flow) and Item definition not supported")
         }
     }
+    debug!("{:?}", stmt.span().start());
+    debug!("{:?}", stmt.span().end());
+    debug!("--------------");
 }

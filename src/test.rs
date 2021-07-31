@@ -1,20 +1,11 @@
-struct Rect {
-    w: u32,
-    h: u32,
-}
-
 fn main() {
-    let r = Rect {
-        w: 30,
-        h: 50,
-    };
-
-    println!(
-        "The area of the rectangle is {} square pixels.",
-        area(&r)
-    );
+    let s = String::from("hello");
+    takes_ownership(s);
+    let mut x = 5;
+    let y = x;
+    x = 6;
 }
 
-fn area(rect: &Rect) -> u32 {
-    rect.w * rect.h
+fn takes_ownership(some_string: String) {
+    println!("{}", some_string);
 }
