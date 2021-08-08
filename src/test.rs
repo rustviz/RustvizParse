@@ -1,18 +1,18 @@
+// fn main() {
+//     let s = String::from("hello");
+//     takes_ownership(s);
+//     let mut x = 5;
+//     let y = x;
+//     x = 6;
+// }
+
+// fn takes_ownership(some_string: String) {
+//     println!("{}", some_string);
+// }
+
 fn main() {
-    let mut b = 5;
-    let c = &b;
-    let &_a = c;
-    b = 2;
-    let s = String::from("hello");
-    let len1 = String::len(&s);
-    let len2 = s.len(); // shorthand for the above
-    assert!(call(a));
-    // println!("len1 = {} = len2 = {}", len1, len2);
-    let x = String::from("hello");
-    let _z = {
-        let y = x;
-        // println!("{}", y);
-        // ...
-    };
-    // println!("Hello, world!");
+    fn test_str() {
+        println!("test_str called");
+    }
+    test_str();
 }
