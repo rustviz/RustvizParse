@@ -10,11 +10,11 @@ edition = "2018"
 version = "1.0.72"
 default-features = false # do not include the default features, and optionally
                          # cherry-pick individual features
-features = ["parsing", "full", "extra-traits"]
+features = ["parsing", "full", "extra-traits", "printing"]
 
 [dependencies]
 quote = "1.0.9"
 log = "0.4.14"
 env_logger = "0.8.4"
 clap = "2.33.3"
-proc-macro2="1.0"
+proc-macro2 = { version = "1.0.28", features = ["span-locations"]}
