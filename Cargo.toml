@@ -10,7 +10,7 @@ edition = "2018"
 version = "1.0.72"
 default-features = false # do not include the default features, and optionally
                          # cherry-pick individual features
-features = ["parsing", "full", "extra-traits", "printing"]
+features = ["parsing", "full", "extra-traits", "printing", "clone-impls"]
 
 [dependencies]
 quote = "1.0.9"

@@ -11,8 +11,18 @@
 // }
 
 fn main() {
-    fn test_str() {
-        println!("test_str called");
+    let a = 5;
+    let b = 5;
+    fn test() {
+        let c = 5;
+        let d = 5;
+        let e = 10;
+        {
+            let e = 5;
+            let f = 5;
+            fn e() {
+            }
+            
+        }
     }
-    test_str();
 }

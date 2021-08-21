@@ -7,8 +7,9 @@ use std::io::Read;
 use std::path::PathBuf;
 use syn::spanned::Spanned;
 
-static mut var_def: HashSet<RAP> = HashSet::new(); 
-static mut color_info: Vec<HashMap<String, Vec<Infoitem>>> = Vec::new();
+// TODO: CRYUS Global variable? Stack allocated...
+// static mut var_def: HashSet<RAP> = HashSet::new(); 
+// static mut color_info: Vec<HashMap<String, Vec<Infoitem>>> = Vec::new();
 
 #[derive(Debug, Hash, PartialEq, Eq)]
 struct OwnerInfo {
@@ -32,16 +33,17 @@ enum RAP {
     Function(FuncInfo),
 }
 
+#[derive(Debug)]
 enum Infoitem {
     Struct(syn::ItemStruct), // struct definition
     Func(syn::ItemFn),
     FnArg(syn::FnArg),
-    Local(syn::Local),
-    Call(syn::ExprCall),
-    MethodCall(syn::ExprMethodCall),
-    is_ref(syn::ExprReference),
+    Local(syn::Local), //let a = 5;
+    Call(syn::ExprCall), // func_cal();
+    MethodCall(syn::ExprMethodCall), // a.to_string();
+    Reference(syn::ExprReference), // &a;
     ExprStruct(syn::ExprStruct), // struct literal expression
-    Macro(syn::ExprMacro)
+    Macro(syn::ExprMacro) 
 }
 
 fn path_fmt(exprpath : &syn::ExprPath) -> String {
@@ -62,17 +64,35 @@ pub fn parse(FileName : &PathBuf) -> Result<String, Box<Error>> {
     file.read_to_string(&mut content)?;
     let ast = syn::parse_file(&content)?;
     debug!("{:#?}", ast);
-    let header = str_gen(ast);
+    let mut color_info: Vec<HashMap<String, Vec<Infoitem>>> = Vec::new();
+    let header = header_gen(ast, &mut color_info);
+    color_gen(&color_info);
     Ok(header)
 }
 
-fn color_gen() {
+fn color_gen(color_info: &Vec<HashMap<String, Vec<Infoitem>>>) {
+    for i in color_info {
+        println!("In Scope: ");
+        println!("----------");
+        for (key, value) in i {
+            println!("Ident: ");
+            println!("  {}", key);
+            println!("Type/Content : ");
+            for i in value {
+                println!("{:?}", i);
+                println!("");
+            }
+            println!("")
+        }
+        println!("----------");
+    }
 }
 
-fn str_gen(ast: syn::File) -> String {
+fn header_gen(ast: syn::File, color_info: &mut Vec<HashMap<String, Vec<Infoitem>>>) -> String {
     // generate header lines 
+    let mut var_def: HashSet<RAP> = HashSet::new(); 
     color_info.push(HashMap::new());
-    parse_item(&ast.items, 0);
+    parse_item(&ast.items, color_info, &mut var_def, 0);
     let mut header = String::new();
     header.push_str("/* --- BEGIN Variable Definitions ---\n");
     for i in var_def {
@@ -113,7 +133,7 @@ fn str_gen(ast: syn::File) -> String {
     header
 }
 
-fn color_insert(ident: String, ident_info: Infoitem, stack_num: usize) {
+fn color_insert(ident: String, ident_info: Infoitem, color_info: &mut Vec<HashMap<String, Vec<Infoitem>>>, stack_num: usize) {
     match color_info[stack_num].get_mut(&ident) {
         Some(var_map) => {
             var_map.push(ident_info);
@@ -124,12 +144,16 @@ fn color_insert(ident: String, ident_info: Infoitem, stack_num: usize) {
     }
 }
 
-fn parse_item (items: &Vec<syn::Item>, stack_num: usize) {
+fn parse_item (items: &Vec<syn::Item>, color_info: &mut Vec<HashMap<String, Vec<Infoitem>>>, var_def: &mut HashSet<RAP>, stack_num: usize) {
     for item in items {
         // All items refer to https://docs.rs/syn/1.0.72/syn/enum.Item.html
         // TODO: macros, const, enums, structs... we only consider functions and struct here
         // TODO: Add errors???
-        match *item {
+
+        // TODO: *item and func.clone / item and *func.clone 
+        // match take ownership???
+        // clone of a reference??? or of the variable itself?
+        match item {
             Item::Fn(func) => {
                 debug!("--------------");
                 debug!("func found: {}", func.sig.ident);
@@ -138,15 +162,14 @@ fn parse_item (items: &Vec<syn::Item>, stack_num: usize) {
                 debug!("--------------");
                 // push stack and register func into color_info
                 color_info.push(HashMap::new());
-                color_insert(format!("{}", func.sig.ident), Infoitem::Func(func), stack_num);
+                color_insert(format!("{}", func.sig.ident), Infoitem::Func(func.clone()), color_info, stack_num);
                 // register func into var_def
                 var_def.insert(RAP::Function(FuncInfo{name: Some(format!("{}", func.sig.ident))}));
                 if func.sig.inputs.len() != 0 {
                     // match arguments
                     // create new stack for func arg
-                    color_info.push(HashMap::new());
                     for arg in &func.sig.inputs {
-                        match *arg {
+                        match arg {
                             FnArg::Typed(pat_type) => {
                                 // match arg type
                                 let mut func_arg = OwnerInfo{name: None, ref_mut: false, is_ref: false, field: None};
@@ -154,8 +177,7 @@ fn parse_item (items: &Vec<syn::Item>, stack_num: usize) {
                                 match &*pat_type.pat {
                                     Pat::Ident(pat_ident) => {
                                         // push var into stack
-                                        color_insert(format!("{}", pat_ident.ident), Infoitem::FnArg(arg), stack_num+1);
-                                        // TODO: We are assuming that the is_ref and ref_mut info are after colon??
+                                        color_insert(format!("{}", pat_ident.ident), Infoitem::FnArg(arg.clone()), color_info, stack_num+1);
                                         func_arg.name=Some(String::from(format!("{}", pat_ident.ident)));
                                         debug!("arg found: {:?}", func_arg.name);
                                     },
@@ -186,12 +208,12 @@ fn parse_item (items: &Vec<syn::Item>, stack_num: usize) {
                 }
                 // parse function block
                 for stmt in &func.block.stmts {
-                    parse_stmt(&stmt, stack_num+1);
+                    parse_stmt(&stmt, color_info, var_def, stack_num+1);
                 }
             },
             Item::Struct(ItemStruct) => {
                 // push struct dec into stack
-                color_insert(format!("{}", ItemStruct.ident), Infoitem::Struct(ItemStruct), stack_num);
+                color_insert(format!("{}", ItemStruct.ident), Infoitem::Struct(ItemStruct.clone()), color_info, stack_num);
             },
             _ => info!("syn::Item option not supported")
         }
@@ -199,7 +221,7 @@ fn parse_item (items: &Vec<syn::Item>, stack_num: usize) {
     // var_def
 }
 
-fn parse_stmt(stmt: &syn::Stmt, stack_num: usize) {
+fn parse_stmt(stmt: &syn::Stmt, color_info: &mut Vec<HashMap<String, Vec<Infoitem>>>, var_def: &mut HashSet<RAP>, stack_num: usize) {
     // local => let statement
     // Item => function definition, struct definition etc.
     // Expr => Expression without semicolon (return...)
@@ -208,7 +230,7 @@ fn parse_stmt(stmt: &syn::Stmt, stack_num: usize) {
     debug!("stmt found");
     let mut local = OwnerInfo{name: None, ref_mut: false, is_ref: false, field: None};
     // TODO: local is acting as a placeholder for Expr, Item and Semi, need more elegent impl for parse_expr()...
-    match *stmt {
+    match stmt {
         Stmt::Local(loc) => {
             // let statement
             // save variable info
@@ -216,12 +238,14 @@ fn parse_stmt(stmt: &syn::Stmt, stack_num: usize) {
                 //TODO: Need to consider object type after the eq sign
                 // eg: let a = &5; -> a is a is_ref type
                 // let a = 5 -> a is not a is_ref type
+                // let &a = &&5;
+                // let a = *&&5;
                 // we assume that a is determined by the rhs of the eq whether it's an 'explict' is_ref
                 Pat::Ident(pat_ident) => {
                     debug!("Owner found: {}, ref_mut: {:?}, ref: {:?}", pat_ident.ident, pat_ident.mutability, pat_ident.by_ref);
                     debug!("{:?}", pat_ident.ident.span().start());
                     debug!("{:?}", pat_ident.ident.span().end());
-                    color_insert(format!("{}", pat_ident.ident), Infoitem::Local(loc), stack_num);
+                    color_insert(format!("{}", pat_ident.ident), Infoitem::Local(loc.clone()), color_info, stack_num);
                     local.name = Some(String::from(format!("{}", pat_ident.ident)));
                     // var ref_mut not is_ref ref_mut
                     if let Some(_mutable) = &pat_ident.mutability {
@@ -230,7 +254,7 @@ fn parse_stmt(stmt: &syn::Stmt, stack_num: usize) {
                 },
                 //TODO: Need to consider object type after the eq sign (is this common? where is this useful?)
                 // eg: let &a = &5 -> a is not a is_ref type
-                // let &a = &&5 ???
+                // CRYUS: let &a = &&5 ???
                 // we could have let &mut a = &mut 5; let &mut mut a = &mut 5; let &a = &5
                 // why can't we have let mut &a = &5
                 // Pat::is_ref(pat_reference) => {
@@ -249,11 +273,11 @@ fn parse_stmt(stmt: &syn::Stmt, stack_num: usize) {
                 // let &mut a : &mut i32 = &mut 5; -> a is not a is_ref type
                 // we assume that all let statement : let foo:i32 = 5;
                 Pat::Type(pat_type) => {
-                    if let Pat::Ident(pat_ident) = *pat_type.pat {
+                    if let Pat::Ident(pat_ident) = &*pat_type.pat {
                         local.name = Some(String::from(format!("{}", pat_ident.ident)));
-                        color_insert(format!("{}", pat_ident.ident), Infoitem::Local(loc), stack_num);
+                        color_insert(format!("{}", pat_ident.ident), Infoitem::Local(loc.clone()), color_info, stack_num);
                     }
-                    if let Type::Reference(type_ref) = *pat_type.ty {
+                    if let Type::Reference(type_ref) = &*pat_type.ty {
                         local.is_ref = true;
                         if let Some(_mutable) = type_ref.mutability {
                             local.ref_mut = true;
@@ -265,7 +289,7 @@ fn parse_stmt(stmt: &syn::Stmt, stack_num: usize) {
 
             //if a value or a is_ref is assigned
             if let Some((_eq, expr)) = &loc.init {
-                parse_expr(expr, &mut local, stack_num);
+                parse_expr(expr, &mut local, color_info, var_def, stack_num);
             }
 
             match local.field {
@@ -286,16 +310,15 @@ fn parse_stmt(stmt: &syn::Stmt, stack_num: usize) {
             }
         },
         Stmt::Semi(exp, _) => {
-            parse_expr(&exp, &mut local, stack_num);
+            parse_expr(&exp, &mut local, color_info, var_def, stack_num);
             info!("{:?}", exp);
-            //TODO: deal with semis?
         }, 
         Stmt::Expr(exp) => {
-            parse_expr(&exp, &mut local, stack_num);
+            parse_expr(&exp, &mut local, color_info, var_def, stack_num);
             info!("{:?}", exp);
         },
         Stmt::Item(item) => {
-            parse_item(vec![item], stack_num);
+            parse_item(&vec![item.clone()], color_info, var_def, stack_num);
         }
     }
     debug!("{:?}", stmt.span().start());
@@ -303,23 +326,27 @@ fn parse_stmt(stmt: &syn::Stmt, stack_num: usize) {
     debug!("--------------");
 }
 
-fn parse_expr (expr: &syn::Expr, local: &mut OwnerInfo, stack_num: usize) {
+fn parse_expr (expr: &syn::Expr, 
+    local: &mut OwnerInfo, 
+    color_info: &mut Vec<HashMap<String, Vec<Infoitem>>>, 
+    var_def: &mut HashSet<RAP>, 
+    stack_num: usize) {
+
     debug!("--------------");
     debug!("expr found");
-    match *expr {
+    match expr {
         Expr::Call(exprcall) => {
             if let Expr::Path(exprpath) = &*exprcall.func {
                 // println!("func found: {:?}", exprpath);
                 var_def.insert(RAP::Function(FuncInfo{name: Some(format!("{}", path_fmt(&exprpath)))}));
-                color_insert(format!("{}", path_fmt(&exprpath)), Infoitem::Call(exprcall), stack_num);
+                color_insert(format!("{}", path_fmt(&exprpath)), Infoitem::Call(exprcall.clone()), color_info, stack_num);
             }
         },
         Expr::MethodCall(exprm_call) => {
-            if let m_call = String::from(format!("{}", exprm_call.method)) {
-                debug!("func found: {}",  m_call);
-                var_def.insert(RAP::Function(FuncInfo{name: Some(format!("{}",  m_call))}));
-                color_insert(format!("{}", m_call), Infoitem::MethodCall(exprm_call), stack_num);
-            }
+            let m_call = String::from(format!("{}", exprm_call.method));
+            debug!("func found: {}",  m_call);
+            var_def.insert(RAP::Function(FuncInfo{name: Some(format!("{}",  m_call))}));
+            color_insert(format!("{}", m_call), Infoitem::MethodCall(exprm_call.clone()), color_info, stack_num);
         },
         Expr::Reference(expred) => {
             debug!("Owner's a is_ref: {:?}", expred.mutability);
@@ -327,6 +354,7 @@ fn parse_expr (expr: &syn::Expr, local: &mut OwnerInfo, stack_num: usize) {
             if let Some(_mutable) = &expred.mutability {
                 local.ref_mut = true;
             }
+            //TODO: reference target need to be added
             if let Expr::Path(exprpath) = &*expred.expr {
                 // println!("Ref target: {:?}", exprpath);
                 debug!(" Ref target: {}", path_fmt(&exprpath));
@@ -334,8 +362,9 @@ fn parse_expr (expr: &syn::Expr, local: &mut OwnerInfo, stack_num: usize) {
         },
         Expr::Block(expr_block) => {
             debug!("found block");
+            color_info.push(HashMap::new());
             for stmt in &expr_block.block.stmts {
-                parse_stmt(&stmt, stack_num+1);
+                parse_stmt(&stmt, color_info, var_def, stack_num+1);
             }
         },
         Expr::Struct(expr_struct) => {
@@ -347,20 +376,21 @@ fn parse_expr (expr: &syn::Expr, local: &mut OwnerInfo, stack_num: usize) {
                         field_vec.push(format!("{}",Ident));
                     }
                     _ => {
-                        //TODO: do not take care of pair struct
+                        info!("struct type not supported")
                     }
                 }
             }
             local.field = Some(field_vec);
-            color_insert(format!("{}", expr_struct.path.segments[expr_struct.path.segments.len()-1].ident), Infoitem::ExprStruct(expr_struct), stack_num);
+            color_insert(format!("{}", expr_struct.path.segments[expr_struct.path.segments.len()-1].ident), 
+            Infoitem::ExprStruct(expr_struct.clone()), color_info, stack_num);
         },
         Expr::Macro(_macro) => {
             debug!("found macro");
             let macro_path = &_macro.mac.path;
             if let Some(macro_func) = macro_path.segments.first() {
                 debug!("found {}", macro_func.ident);
-                //TODO: only consider Println and assert here
-                color_insert(format!("{}", macro_func.ident), Infoitem::Macro(_macro), stack_num);
+                //only consider Println and assert here
+                color_insert(format!("{}", macro_func.ident), Infoitem::Macro(_macro.clone()), color_info, stack_num);
                 if macro_func.ident.to_string() == "println" {
                     var_def.insert(RAP::Function(FuncInfo{name: Some(format!("{}!", macro_func.ident))}));
                     let mut tokentree_buff = Vec::new();
@@ -369,7 +399,7 @@ fn parse_expr (expr: &syn::Expr, local: &mut OwnerInfo, stack_num: usize) {
                         debug!("{:?}",item);
                         match item {
                             proc_macro2::TokenTree::Punct(punct) => {
-                                if (!first_lit) {
+                                if !first_lit {
                                     // dump "{:?...}" in println!()
                                     tokentree_buff.clear();
                                     first_lit = true;
@@ -378,7 +408,7 @@ fn parse_expr (expr: &syn::Expr, local: &mut OwnerInfo, stack_num: usize) {
                                     tokenstream_buff.extend(tokentree_buff);
                                     let res: Result<syn::Expr, syn::Error> = syn::parse2(tokenstream_buff);
                                     match res {
-                                        Ok(exp) => parse_expr(&exp, local, stack_num),
+                                        Ok(exp) => parse_expr(&exp, local, color_info, var_def, stack_num),
                                         Err(_) => debug!("Assert macro parse error"),
                                     }
                                     tokentree_buff = Vec::new();
@@ -393,13 +423,13 @@ fn parse_expr (expr: &syn::Expr, local: &mut OwnerInfo, stack_num: usize) {
                     tokenstream_buff.extend(tokentree_buff);
                     let res: Result<syn::Expr, syn::Error> = syn::parse2(tokenstream_buff);
                     match res {
-                        Ok(exp) => parse_expr(&exp, local, stack_num),
+                        Ok(exp) => parse_expr(&exp, local, color_info, var_def, stack_num),
                         Err(_) => debug!("Assert macro parse error"),
                     }
                 } else if macro_func.ident.to_string() == "assert" {
                     let res: Result<syn::Expr, syn::Error> = syn::parse2(_macro.mac.tokens.clone());
                     match res {
-                        Ok(exp) => parse_expr(&exp, local, stack_num),
+                        Ok(exp) => parse_expr(&exp, local, color_info, var_def, stack_num),
                         Err(_) => debug!("Assert macro parse error"),
                     }
                     // parse_expr(res, local, var_def);
