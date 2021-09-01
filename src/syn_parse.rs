@@ -189,6 +189,7 @@ fn var_allo_insert<'a>(ident: String, ident_info: StackItem,
     // Func(syn::ItemFn)
     // FnArg(syn::FnArg)
     // Local(syn::Local)
+    // Macro(syn::ExprMacro) 
     // ----------------------------------
     ident_info.ItemOrig = Some(&target_rap);
     if var_def.contains_key(&get_identstr(&target_rap)) {
@@ -221,19 +222,11 @@ fn non_allo_insert(ident: String, ident_info: StackItem,
     // not found then add RAP and call var_allo_insert()
     // called for the following InfoItem:
     // ----------------------------------
-    // Struct(syn::ItemStruct)
-    // Func(syn::ItemFn)
-    // FnArg(syn::FnArg)
-    // Local(syn::Local)
+    // Call(syn::ExprCall), // func_cal();
+    // MethodCall(syn::ExprMethodCall), // a.to_string();
+    // Reference(syn::ExprReference), // &a;
     // ----------------------------------
-    match color_info[stack_num].get_mut(&ident) {
-        Some(var_map) => {
-            var_map.push(ident_info);
-        },
-        None => {
-            color_info[stack_num].insert(ident, vec![ident_info]);
-        }
-    }
+
 }
 
 //TODO: do I need to specify same lifetime for color_info and var_def
