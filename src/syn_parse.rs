@@ -5,74 +5,15 @@ use std::error::Error;
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
+use std::ptr;
 use syn::spanned::Spanned;
 use std::sync::Arc;
-use rustviz_lib::data::{ResourceAccessPoint};
-
-// #[derive(Debug, Hash, PartialEq, Eq, Clone)]
-// pub struct OwnerInfo {
-//     name: String, 
-//     is_ref: bool,
-//     ref_mut: bool, 
-//     field: Option<Vec<String>>, // for structs only
-//     hash_id: Option<i32>,
-// }
-
-// #[derive(Debug, Hash, PartialEq, Eq, Clone)]
-// pub struct FuncInfo {
-//     name: String,
-//     hash_id: Option<i32>,
-// }
-
-// #[derive(Debug, Hash, PartialEq, Eq, Clone)]
-// pub enum RAP {
-//     Owner(OwnerInfo),
-//     MutRef(OwnerInfo),
-//     StaticRef(OwnerInfo),
-//     Struct(OwnerInfo),
-//     Function(FuncInfo),
-// }
-
-// fn get_identstr(rap: &RAP) -> &String {
-//     match rap {
-//         RAP::Owner(OwnerInfo) => {
-//             &OwnerInfo.name
-//         }
-//         RAP::MutRef(OwnerInfo) => {
-//             &OwnerInfo.name
-//         }
-//         RAP::StaticRef(OwnerInfo) => {
-//             &OwnerInfo.name
-//         }
-//         RAP::Struct(OwnerInfo) => {
-//             &OwnerInfo.name
-//         }
-//         RAP::Function(FuncInfo) => {
-//             &FuncInfo.name
-//         }
-//     }
-// }
-
-// fn assign_id(rap: &mut RAP, hash_num: &i32) {
-//     match rap {
-//         RAP::Owner(OwnerInfo) => {
-//             OwnerInfo.hash_id = Some(hash_num.clone());
-//         }
-//         RAP::MutRef(OwnerInfo) => {
-//             OwnerInfo.hash_id = Some(hash_num.clone());
-//         }
-//         RAP::StaticRef(OwnerInfo) => {
-//             OwnerInfo.hash_id = Some(hash_num.clone());
-//         }
-//         RAP::Struct(OwnerInfo) => {
-//             OwnerInfo.hash_id = Some(hash_num.clone());
-//         }
-//         RAP::Function(FuncInfo) => {
-//             FuncInfo.hash_id = Some(hash_num.clone());
-//         }
-//     }
-//     *hash_num+=1;
-// }
+use rustviz_lib::data::{ResourceAccessPoint, 
+    Owner, 
+    Struct,
+    MutRef,
+    StaticRef,
+    Function};
 
 struct data_pkg {
     color_info: Vec<HashMap<String, Vec<StackItem>>>,
@@ -109,7 +50,8 @@ fn path_fmt(exprpath : &syn::ExprPath) -> String {
     pathname[0..pathname.len()-2].to_string()
 }
 
-pub fn syn_parse(FileName : &PathBuf) -> Result<(HashMap<String, Vec<Arc<RAP>>>, Vec<HashMap<String, Vec<StackItem>>>), Box<Error>> {    
+pub fn syn_parse(FileName : &PathBuf) 
+    -> Result<(HashMap<String, Vec<Arc<ResourceAccessPoint>>>, Vec<HashMap<String, Vec<StackItem>>>), Box<Error>> {    
     // let mut file = File::open("/Users/haochenz/Desktop/rustviz/src/examples/hatra1/main.rs")?;
     let mut file = File::open(FileName)?;
     // let mut file = File::open("/Users/haochenz/Desktop/playgroud/parse/src/test.rs")?;
@@ -124,9 +66,9 @@ pub fn syn_parse(FileName : &PathBuf) -> Result<(HashMap<String, Vec<Arc<RAP>>>,
     };
     data_pkg.color_info.push(HashMap::new());
     let mut hash_num: u64 = 0;
-    parse_item(&ast.items, &mut data_pkg, hash_num, 0);
+    parse_item(&ast.items, &mut data_pkg, &mut hash_num, 0);
     // color_gen(&color_info);
-    Ok((var_def, color_info))
+    Ok((data_pkg.var_alloc, data_pkg.color_info))
 }
 
 fn color_gen(color_info: &Vec<HashMap<String, Vec<Infoitem>>>) {
@@ -195,12 +137,12 @@ fn struct_field_insert(syn_info: Infoitem,
     target_rap: ResourceAccessPoint,
     data: &mut data_pkg,
     stack_num: usize) {
-        let rap_arc;
-        match data.var_def.get_mut(&struct_type) {
+        let mut rap_arc: Option<Arc<ResourceAccessPoint>> = None;
+        match data.var_def.get(&struct_type) {
             Some(field) => {
-                match field.get_mut(&target_rap.name()) {
+                match field.get(target_rap.name()) {
                     Some(res) => {
-                        rap_arc = res;
+                        rap_arc = Some(res.clone());
                     },
                     _ => {
                         //ERROR!
@@ -213,15 +155,15 @@ fn struct_field_insert(syn_info: Infoitem,
         }
         let stack_item = StackItem {
             SynInfo: syn_info,
-            ItemOrig: Arc::clone(&rap_arc),
+            ItemOrig: Arc::clone(&rap_arc.unwrap()),
         };
         // push into stack
-        match data.color_info[stack_num].get_mut(ident) {
+        match data.color_info[stack_num].get_mut(target_rap.name()) {
             Some(var_map) => {
                 var_map.push(stack_item);
             },
             None => {
-                data.color_info[stack_num].insert(ident.clone(), vec![stack_item]);
+                data.color_info[stack_num].insert(target_rap.name().clone(), vec![stack_item]);
             }
         }
     }
@@ -242,18 +184,18 @@ fn struct_def_insert(syn_info: Infoitem,
                 field.insert(target_rap.name().clone(), rap_arc);
             },
             _ => {
-                let field = HashMap::new();
+                let mut field = HashMap::new();
                 field.insert(target_rap.name().clone(), rap_arc);
                 data.var_def.insert(struct_type, field);
             }
         }
         // push into stack
-        match data.color_info[stack_num].get_mut(ident) {
+        match data.color_info[stack_num].get_mut(target_rap.name()) {
             Some(var_map) => {
                 var_map.push(stack_item);
             },
             None => {
-                data.color_info[stack_num].insert(ident.clone(), vec![stack_item]);
+                data.color_info[stack_num].insert(target_rap.name().clone(), vec![stack_item]);
             }
         }
     }
@@ -279,23 +221,22 @@ fn var_allo_insert(syn_info: Infoitem,
         SynInfo: syn_info,
         ItemOrig: Arc::clone(&rap_arc),
     };
-    let ident = get_identstr(&target_rap);
 
-    if data.var_alloc.contains_key(ident) {
+    if data.var_alloc.contains_key(target_rap.name()) {
         // TODO: add shadow RAP
         // var_def[&get_identstr(&target_rap)].push(target_rap);
     } else {
         // add RAP
-        data.var_alloc.insert(get_identstr(&target_rap).clone(), vec![rap_arc]);
+        data.var_alloc.insert(target_rap.name().clone(), vec![rap_arc]);
     }
     
     // push into stack
-    match data.color_info[stack_num].get_mut(ident) {
+    match data.color_info[stack_num].get_mut(target_rap.name()) {
         Some(var_map) => {
             var_map.push(stack_item);
         },
         None => {
-            data.color_info[stack_num].insert(ident.clone(), vec![stack_item]);
+            data.color_info[stack_num].insert(target_rap.name().clone(), vec![stack_item]);
         }
     }
 }
@@ -317,7 +258,7 @@ fn non_allo_insert(ident: String,
     // MethodCall(syn::ExprMethodCall), // a.to_string();
     // Reference(syn::ExprReference), // &a;
     // ----------------------------------
-    let rap_arc;
+    let mut rap_arc: Option<Arc<ResourceAccessPoint>> = None;
     let stack_item;
 
     if let Some(mut tar_rap) = target_rap {
@@ -329,12 +270,13 @@ fn non_allo_insert(ident: String,
         match data.var_alloc.get(&ident) {
             Some(rap_vec) => {
                 //TODO: shadowing variable
-                rap_arc = rap_vec[0];
+                rap_arc = Some(rap_vec[0].clone());
             },
             _ => {
-                hash_num+=1;
-                rap_arc = Arc::new(tar_rap);
-                data.var_alloc.insert(ident, vec![rap_arc]);
+                *hash_num+=1;
+                let rap_alloc = Arc::new(tar_rap);
+                rap_arc = Some(rap_alloc.clone());
+                data.var_alloc.insert(ident.clone(), vec![rap_alloc]);
             }
         }
     } else {
@@ -344,7 +286,7 @@ fn non_allo_insert(ident: String,
         match data.var_alloc.get(&ident) {
             Some(rap_vec) => {
                 //TODO: shadowing variable
-                rap_arc = rap_vec[0];
+                rap_arc = Some(rap_vec[0].clone());
             },
             _ => {
                 //Error!!
@@ -355,7 +297,7 @@ fn non_allo_insert(ident: String,
 
     stack_item = StackItem {
         SynInfo: syn_info,
-        ItemOrig: Arc::clone(&rap_arc),
+        ItemOrig: Arc::clone(&rap_arc.unwrap()),
     };
 
     // push into stack
@@ -364,7 +306,7 @@ fn non_allo_insert(ident: String,
             var_map.push(stack_item);
         },
         None => {
-            data.color_info[stack_num].insert(ident, vec![stack_item]);
+            data.color_info[stack_num].insert(ident.clone(), vec![stack_item]);
         }
     }
 }
@@ -373,7 +315,7 @@ fn non_allo_insert(ident: String,
 
 //TODO: do I need to specify same lifetime for color_info and var_def
 fn parse_item (items: &Vec<syn::Item>, 
-    data: data_pkg,
+    data: &mut data_pkg,
     hash_num: &mut u64,
     stack_num: usize) {
 
@@ -393,8 +335,8 @@ fn parse_item (items: &Vec<syn::Item>,
                 debug!("{:?}", func.span().end());
                 debug!("--------------");
                 // register func into var_def
-                let func_rap = ResourceAccessPoint::Function(Function{name: format!("{}", func.sig.ident), hash: hash_num});
-                hash_num+=1;
+                let func_rap = ResourceAccessPoint::Function(Function{name: format!("{}", func.sig.ident), hash: hash_num.clone()});
+                *hash_num+=1;
                 // push stack and register func into color_info
                 data.color_info.push(HashMap::new());
                 var_allo_insert(Infoitem::Func(func.clone()), 
@@ -407,8 +349,8 @@ fn parse_item (items: &Vec<syn::Item>,
                         match arg {
                             FnArg::Typed(pat_type) => {
                                 // match arg type
-                                let func_argname;
-                                let is_mut = false;
+                                let mut func_argname = String::new();
+                                let mut is_mut = false;
                                 debug!("--------------");
                                 // extract arg ident
                                 match &*pat_type.pat {
@@ -418,7 +360,7 @@ fn parse_item (items: &Vec<syn::Item>,
                                         if let Some(_mutability) = &pat_ident.mutability {
                                             is_mut = true;
                                         }
-                                        debug!("arg found: {:?}", func_arg.name);
+                                        // debug!("arg found: {:?}", func_arg.name);
                                     },
                                     _ => info!("function arg name not supported")
                                 }
@@ -426,20 +368,21 @@ fn parse_item (items: &Vec<syn::Item>,
                                 debug!("{:?}", pat_type.span().end());
                                 debug!("--------------");
                                 // extract arg type
-                                let arg_rap;
+                                // TODO: fix this
+                                let mut arg_rap = ResourceAccessPoint::Owner(Owner {name: String::new(), hash: 0, is_mut: false});
                                 match &*pat_type.ty {
                                     Type::Reference(type_reference) => {                                  
                                         if let Some(_mutability) = &type_reference.mutability {
-                                            arg_rap = ResourceAccessPoint::MutRef(MutRef {name: func_argname, hash: hash_num, is_mut: is_mut});
-                                            hash_num+=1;
+                                            arg_rap = ResourceAccessPoint::MutRef(MutRef {name: func_argname, hash: hash_num.clone(), is_mut: is_mut});
+                                            *hash_num+=1;
                                         } else {
-                                            arg_rap = ResourceAccessPoint::StaticRef(StaticRef {name: func_argname, hash: hash_num, is_mut: is_mut});
-                                            hash_num+=1;
+                                            arg_rap = ResourceAccessPoint::StaticRef(StaticRef {name: func_argname, hash: hash_num.clone(), is_mut: is_mut});
+                                            *hash_num+=1;
                                         }
                                     },
                                     Type::Path(_) => {
-                                        arg_rap = ResourceAccessPoint::Owner(Owner {name: func_argname, hash: hash_num, is_mut: is_mut});
-                                        hash_num+=1;
+                                        arg_rap = ResourceAccessPoint::Owner(Owner {name: func_argname, hash: hash_num.clone(), is_mut: is_mut});
+                                        *hash_num+=1;
                                     }
                                     _ => info!("function arg type not supported")
                                 }
@@ -455,21 +398,23 @@ fn parse_item (items: &Vec<syn::Item>,
                     parse_stmt(&stmt, data, hash_num, stack_num+1);
                 }
             },
-            Item::Struct(ItemStruct) => {
+            Item::Struct(itemstruct) => {
                 // TODO: fix struct
-                let struct_type = format!("{}", ItemStruct.ident);
-                match &ItemStruct.fields {
+                let struct_type = format!("{}", itemstruct.ident);
+                match &itemstruct.fields {
                     syn::Fields::Named(named_field) => {
                         for i in &named_field.named {
-                            let struct_rap = Struct {
-                                name: format!("{}", i.ident.clone().unwrap()),
-                                hash: hash_num,
-                                owner: -1, // no owner for struct declaration
-                                is_mut: false,
-                                is_member: false,
-                            };
-                            hash_num+=1;
-                            struct_def_insert(ItemStruct, struct_type, struct_rap, data, stack_num);
+                            let struct_rap = ResourceAccessPoint::Struct(
+                                Struct {
+                                    name: format!("{}", i.ident.clone().unwrap()),
+                                    hash: hash_num.clone(),
+                                    owner: hash_num.clone(), // no owner for struct declaration
+                                    is_mut: false,
+                                    is_member: false,
+                                }
+                            );
+                            *hash_num+=1;
+                            struct_def_insert(Infoitem::Struct(itemstruct.clone()), struct_type, struct_rap, data, stack_num);
                         }
                     },
                     _ => {
@@ -484,13 +429,13 @@ fn parse_item (items: &Vec<syn::Item>,
 }
 
 // used to derive info from expr parse after eq sign
-struct expr_derive {
+struct expr_derive <'a> {
     name: String,
     var_mut: bool,
     is_ref: bool,
     ref_mut: bool,
     is_struct: bool,
-    hash: u64,
+    hash: &'a mut u64,
 }
 
 fn parse_stmt(stmt: &syn::Stmt, 
@@ -504,15 +449,15 @@ fn parse_stmt(stmt: &syn::Stmt,
     debug!("--------------");
     debug!("stmt found");
 
-    let expr_pass = expr_derive {
-        name: String::new(""),
+    *hash_num+=1;
+    let mut expr_pass = expr_derive {
+        name: String::from(""),
         var_mut: false,
         is_ref: false,
         ref_mut: false,
         is_struct: false,
         hash: hash_num,
     };
-    hash_num+=1;
 
     match stmt {
         Stmt::Local(loc) => {
@@ -575,39 +520,47 @@ fn parse_stmt(stmt: &syn::Stmt,
 
             //if a value or a is_ref is assigned
             if let Some((_eq, expr)) = &loc.init {
-                parse_expr(expr, Some(expr_pass), data, hash_num, stack_num);
+                parse_expr(expr, Some(&mut expr_pass), data, hash_num, stack_num);
             }
             
             let expr_rap;
             if expr_pass.is_struct {
-                expr_rap = Struct {
+                expr_rap = ResourceAccessPoint::Struct(
+                    Struct {
                     name: expr_pass.name,
-                    hash: expr_pass.hash,
-                    owner: expr_pass.hash,
+                    hash: expr_pass.hash.clone(),
+                    owner: expr_pass.hash.clone(),
                     is_mut: expr_pass.var_mut,
-                    is_member: false,
-                }
+                    is_member: false
+                    }
+                );
             } else {
                 if expr_pass.is_ref {
                     if expr_pass.ref_mut {
-                        expr_rap = MutRef {
+                        expr_rap = ResourceAccessPoint::MutRef(
+                            MutRef {
                             name: expr_pass.name,
-                            hash: expr_pass.hash,
+                            hash: expr_pass.hash.clone(),
                             is_mut: expr_pass.var_mut,
-                        }
+                            }
+                        );
                     } else {
-                        expr_rap = StaticRef {
+                        expr_rap = ResourceAccessPoint::StaticRef( 
+                            StaticRef {
                             name: expr_pass.name,
-                            hash: expr_pass.hash,
+                            hash: expr_pass.hash.clone(),
                             is_mut: expr_pass.var_mut,
-                        }
+                            }
+                        );
                     }
                 } else {
-                    expr_rap = Owner {
+                    expr_rap = ResourceAccessPoint::Owner(
+                        Owner {
                         name: expr_pass.name,
-                        hash: expr_pass.hash,
+                        hash: expr_pass.hash.clone(),
                         is_mut: expr_pass.var_mut, 
-                    }
+                        }
+                    );
                 }
             }
             var_allo_insert(Infoitem::Local(loc.clone()), expr_rap,
@@ -643,7 +596,7 @@ fn parse_expr (expr: &syn::Expr,
         Expr::Call(exprcall) => {
             if let Expr::Path(exprpath) = &*exprcall.func {
                 // println!("func found: {:?}", exprpath);
-                let call_rap = ResourceAccessPoint::Function(Function{name: format!("{}", path_fmt(&exprpath)), hash: hash_num});
+                let call_rap = ResourceAccessPoint::Function(Function{name: format!("{}", path_fmt(&exprpath)), hash: hash_num.clone()});
                 non_allo_insert(format!("{}", path_fmt(&exprpath)),
                 Infoitem::Call(exprcall.clone()), Some(call_rap),
                 data, hash_num, stack_num);
@@ -652,7 +605,7 @@ fn parse_expr (expr: &syn::Expr,
         Expr::MethodCall(exprm_call) => {
             let m_call = String::from(format!("{}", exprm_call.method));
             debug!("func found: {}",  m_call);
-            let mcall_rap = ResourceAccessPoint::Function(Function{name: format!("{}",  m_call), hash: hash_num});
+            let mcall_rap = ResourceAccessPoint::Function(Function{name: format!("{}",  m_call), hash: hash_num.clone()});
             non_allo_insert(format!("{}", m_call),
             Infoitem::MethodCall(exprm_call.clone()),
             Some(mcall_rap), data, hash_num, stack_num);
@@ -676,7 +629,7 @@ fn parse_expr (expr: &syn::Expr,
         },
         Expr::Block(expr_block) => {
             debug!("found block");
-            color_info.push(HashMap::new());
+            data.color_info.push(HashMap::new());
             for stmt in &expr_block.block.stmts {
                 parse_stmt(&stmt, data, hash_num, stack_num+1);
             }
@@ -685,22 +638,23 @@ fn parse_expr (expr: &syn::Expr,
             //TODO: take care of struct later
             debug!("found struct");
             let struct_type = format!("{}", expr_struct.path.segments[expr_struct.path.segments.len()-1].ident);
-            let mut field_vec = Vec::new();
             if let Some(stmt_derive) = stmt_pass {
                 stmt_derive.is_struct = true;
                 let owner_hash = stmt_derive.hash.clone();
                 for i in &expr_struct.fields {
                     match &i.member {
                         syn::Member::Named(Ident) => {
-                            let field = Struct {
+                            let field = ResourceAccessPoint::Struct(
+                                Struct {
                                 name: format!("{}",Ident),
                                 //TODO: is it fine without clone?
                                 hash: stmt_derive.hash.clone(),
                                 owner: owner_hash,
                                 is_mut: false,
                                 is_member: true,
-                            };
-                            stmt_derive.hash+=1;
+                                }
+                            );
+                            *stmt_derive.hash+=1;
                             struct_field_insert(Infoitem::ExprStruct(expr_struct.clone()),
                             struct_type, field, data, stack_num);
                         }
@@ -718,10 +672,10 @@ fn parse_expr (expr: &syn::Expr,
             if let Some(macro_func) = macro_path.segments.first() {
                 debug!("found {}", macro_func.ident);
                 //only consider Println and assert here
-                let macro_rap = ResourceAccessPoint::Function(Function{name: format!("{}", macro_func.ident), hash: hash_num});
+                let macro_rap = ResourceAccessPoint::Function(Function{name: format!("{}", macro_func.ident), hash: hash_num.clone()});
                 non_allo_insert(format!("{}", macro_func.ident),
                 Infoitem::Macro(_macro.clone()),
-                Some(macro_rap), data, stack_num);
+                Some(macro_rap), data, hash_num, stack_num);
 
                 if macro_func.ident.to_string() == "println" {
                     let mut tokentree_buff = Vec::new();
