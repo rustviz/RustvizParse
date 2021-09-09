@@ -88,10 +88,11 @@ fn color_gen(color_info: &Vec<HashMap<String, Vec<Infoitem>>>) {
     //     }
     //     println!("----------");
     // }
-    
+
 }
 
 pub fn header_gen_str(var_alloc: &HashMap<String, Vec<Arc<ResourceAccessPoint>>>) -> String {
+    println!("{:?}", var_alloc);
     // generate header lines 
     let mut header = String::new();
     let mut struct_store: Vec<Struct> = Vec::new();
@@ -120,6 +121,9 @@ pub fn header_gen_str(var_alloc: &HashMap<String, Vec<Arc<ResourceAccessPoint>>>
             struct_owner.insert(i.hash, i.name);
         }
     }
+    println!("{:?}", struct_owner);
+    println!("{:?}", struct_member);
+
     for (key, val) in struct_owner {
         header.push_str(&format!("Struct {}{{", val));
         match struct_member.get(&key) {
@@ -144,6 +148,14 @@ fn struct_field_insert(syn_info: Infoitem,
     target_rap: ResourceAccessPoint,
     data: &mut data_pkg,
     stack_num: usize) {
+        if data.var_alloc.contains_key(target_rap.name()) {
+            // TODO: add shadow RAP
+            // var_def[&get_identstr(&target_rap)].push(target_rap);
+        } else {
+            // add RAP
+            data.var_alloc.insert(target_rap.name().clone(), vec![Arc::new(target_rap.clone())]);
+        }
+
         let mut rap_arc: Option<Arc<ResourceAccessPoint>> = None;
         match data.var_def.get(&struct_type) {
             Some(field) => {

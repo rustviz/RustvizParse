@@ -21,8 +21,9 @@ use crate::syn_parse::{syn_parse, header_gen_str};
 
 
 fn main() {
-  let file_name = PathBuf::from("/Users/haochenz/Desktop/rustviz/src/examples/hatra1/main.rs");
-        let parse_res = syn_parse(&file_name);
+  // let file_name = PathBuf::from("/Users/haochenz/Desktop/rustviz/src/examples/hatra1/main.rs");
+  let file_name = PathBuf::from("/Users/haochenz/Desktop/rustviz/src/examples/struct_rect/main.rs");
+  let parse_res = syn_parse(&file_name);
         match parse_res {
             Ok((rap, color_info)) => {
               println!("{}", header_gen_str(&rap));
