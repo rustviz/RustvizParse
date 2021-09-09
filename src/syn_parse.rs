@@ -91,47 +91,54 @@ fn color_gen(color_info: &Vec<HashMap<String, Vec<Infoitem>>>) {
     
 }
 
-// pub fn header_gen_str(var_def: &HashSet<RAP>) -> String {
-//     // generate header lines 
-//     let mut header = String::new();
-//     header.push_str("/* --- BEGIN Variable Definitions ---\n");
-//     for i in var_def {
-//         match i {
-//             RAP::Function(func) => {
-//                 if func.name != String::from("main") {
-//                     header.push_str(&format!("Function {}();\n", &func.name));
-//                 }
-//             },
-//             RAP::StaticRef(statref) => {
-//                 header.push_str(&format!("StaticRef {};\n", &statref.name));
-//             },
-//             RAP::MutRef(mutref) => {
-//                 header.push_str(&format!("MutRef {};\n", &mutref.name));
-//             },
-//             RAP::Owner(owner) => {
-//                 if owner.ref_mut {
-//                     header.push_str(&format!("Owner mut {};\n", &owner.name));
-//                 } else {
-//                     header.push_str(&format!("Owner {};\n", &owner.name));
-//                 }
-//             },
-//             RAP::Struct(stut) => {
-//                 // Struct r{w, h};
-//                 header.push_str(&format!("Struct {}{{", &stut.name));
-//                 for i in stut.field.as_ref().unwrap() {
-//                     header.push_str(&format!("{},",i));
-//                 }
-//                 header.pop();
-//                 header.push_str("};\n");
-//             }
-//             _ => {
-//                 println!("not implemented")
-//             }
-//         }
-//     }
-//     header.push_str("--- END Variable Definitions --- */\n");
-//     header
-// }
+pub fn header_gen_str(var_alloc: &HashMap<String, Vec<Arc<ResourceAccessPoint>>>) -> String {
+    // generate header lines 
+    let mut header = String::new();
+    let mut struct_store: Vec<Struct> = Vec::new();
+
+    header.push_str("/* --- BEGIN Variable Definitions ---\n");
+    for (_, value) in var_alloc {
+        for i in value {
+            header.push_str(&i.rap_header(&mut struct_store));
+        }
+    }
+    // deal with structs
+    let mut struct_owner: HashMap<u64, String> = HashMap::new();
+    let mut struct_member: HashMap<u64, Vec<String>> = HashMap::new();
+
+    for i in struct_store {
+        if i.is_member {
+            match struct_member.get_mut(&i.owner) {
+                Some(member_vec) => {
+                    member_vec.push(i.name);
+                },
+                None => {
+                    struct_member.insert(i.owner, vec![i.name]);
+                }
+            }
+        } else {
+            struct_owner.insert(i.hash, i.name);
+        }
+    }
+    for (key, val) in struct_owner {
+        header.push_str(&format!("Struct {}{{", val));
+        match struct_member.get(&key) {
+            Some(member_vec) => {
+                for i in member_vec {
+                    header.push_str(&format!("{},",i));
+                }
+            }
+            None => {
+                //Error!
+            }
+        }
+        header.pop();
+        header.push_str("};\n");
+    }
+    header.push_str("--- END Variable Definitions --- */\n");
+    header
+}
+
 fn struct_field_insert(syn_info: Infoitem,
     struct_type: String,
     target_rap: ResourceAccessPoint,
@@ -373,15 +380,15 @@ fn parse_item (items: &Vec<syn::Item>,
                                 match &*pat_type.ty {
                                     Type::Reference(type_reference) => {                                  
                                         if let Some(_mutability) = &type_reference.mutability {
-                                            arg_rap = ResourceAccessPoint::MutRef(MutRef {name: func_argname, hash: hash_num.clone(), is_mut: is_mut});
+                                            arg_rap = ResourceAccessPoint::MutRef(MutRef {name: func_argname.clone(), hash: hash_num.clone(), is_mut: is_mut});
                                             *hash_num+=1;
                                         } else {
-                                            arg_rap = ResourceAccessPoint::StaticRef(StaticRef {name: func_argname, hash: hash_num.clone(), is_mut: is_mut});
+                                            arg_rap = ResourceAccessPoint::StaticRef(StaticRef {name: func_argname.clone(), hash: hash_num.clone(), is_mut: is_mut});
                                             *hash_num+=1;
                                         }
                                     },
                                     Type::Path(_) => {
-                                        arg_rap = ResourceAccessPoint::Owner(Owner {name: func_argname, hash: hash_num.clone(), is_mut: is_mut});
+                                        arg_rap = ResourceAccessPoint::Owner(Owner {name: func_argname.clone(), hash: hash_num.clone(), is_mut: is_mut});
                                         *hash_num+=1;
                                     }
                                     _ => info!("function arg type not supported")
@@ -414,7 +421,7 @@ fn parse_item (items: &Vec<syn::Item>,
                                 }
                             );
                             *hash_num+=1;
-                            struct_def_insert(Infoitem::Struct(itemstruct.clone()), struct_type, struct_rap, data, stack_num);
+                            struct_def_insert(Infoitem::Struct(itemstruct.clone()), struct_type.clone(), struct_rap, data, stack_num);
                         }
                     },
                     _ => {
@@ -429,13 +436,13 @@ fn parse_item (items: &Vec<syn::Item>,
 }
 
 // used to derive info from expr parse after eq sign
-struct expr_derive <'a> {
+struct expr_derive {
     name: String,
     var_mut: bool,
     is_ref: bool,
     ref_mut: bool,
     is_struct: bool,
-    hash: &'a mut u64,
+    hash: u64,
 }
 
 fn parse_stmt(stmt: &syn::Stmt, 
@@ -449,15 +456,15 @@ fn parse_stmt(stmt: &syn::Stmt,
     debug!("--------------");
     debug!("stmt found");
 
-    *hash_num+=1;
     let mut expr_pass = expr_derive {
         name: String::from(""),
         var_mut: false,
         is_ref: false,
         ref_mut: false,
         is_struct: false,
-        hash: hash_num,
+        hash: hash_num.clone(),
     };
+    *hash_num+=1;
 
     match stmt {
         Stmt::Local(loc) => {
@@ -654,9 +661,8 @@ fn parse_expr (expr: &syn::Expr,
                                 is_member: true,
                                 }
                             );
-                            *stmt_derive.hash+=1;
                             struct_field_insert(Infoitem::ExprStruct(expr_struct.clone()),
-                            struct_type, field, data, stack_num);
+                            struct_type.clone(), field, data, stack_num);
                         }
                         _ => {
                             info!("struct type not supported")
