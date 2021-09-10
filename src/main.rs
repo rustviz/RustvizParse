@@ -17,18 +17,19 @@ use std::io::Write;
 use clap::{Arg, App};
 
 mod syn_parse;
-use crate::syn_parse::{syn_parse, header_gen_str};
+use crate::syn_parse::{syn_parse, header_gen_str, asource_gen};
 
 
 fn main() {
   // let file_name = PathBuf::from("/Users/haochenz/Desktop/rustviz/src/examples/hatra1/main.rs");
-  let file_name = PathBuf::from("/Users/haochenz/Desktop/rustviz/src/examples/struct_rect/main.rs");
+  let file_name = PathBuf::from("/Users/haochenz/Desktop/rustviz/src/examples/struct_rect/source.rs");
   let parse_res = syn_parse(&file_name);
         match parse_res {
             Ok((rap, color_info)) => {
-              println!("{}", header_gen_str(&rap));
-                // println!("{:?}", rap);
-                // println!("{:?}", color_info);
+              // println!("{}", header_gen_str(&rap));
+              // println!("{:?}", rap);
+              // println!("{:?}", color_info);
+              let res = asource_gen(&file_name, &color_info);
             }
             Err(e) => println!("error parsing header: {:?}", e),
         }

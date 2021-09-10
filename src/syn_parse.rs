@@ -1,9 +1,9 @@
 use syn::{Stmt, Expr, Pat, Item, FnArg, Type};
 use log::{debug, info};
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashSet, HashMap, BTreeMap};
 use std::error::Error;
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, BufReader, BufRead};
 use std::path::PathBuf;
 use std::ptr;
 use syn::spanned::Spanned;
@@ -29,15 +29,15 @@ pub struct StackItem {
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
 pub enum Infoitem {
-    Struct(syn::ItemStruct), // struct definition
+    Struct(syn::Field), // struct definition
     Func(syn::ItemFn),
     FnArg(syn::FnArg),
-    Local(syn::Local), //let a = 5;
-    Call(syn::ExprCall), // func_cal();
+    Local(syn::PatIdent), //let a = 5;
+    Call(syn::ExprPath), // func_cal();
     MethodCall(syn::ExprMethodCall), // a.to_string();
     Reference(syn::ExprReference), // &a;
-    ExprStruct(syn::ExprStruct), // struct literal expression
-    Macro(syn::ExprMacro)
+    ExprStruct(syn::Ident), // struct literal expression
+    Macro(syn::PathSegment)
 }
 
 fn path_fmt(exprpath : &syn::ExprPath) -> String {
@@ -65,13 +65,158 @@ pub fn syn_parse(FileName : &PathBuf)
         var_def: HashMap::new(),
     };
     data_pkg.color_info.push(HashMap::new());
-    let mut hash_num: u64 = 0;
+    let mut hash_num: u64 = 1;
     parse_item(&ast.items, &mut data_pkg, &mut hash_num, 0);
     // color_gen(&color_info);
     Ok((data_pkg.var_alloc, data_pkg.color_info))
 }
 
-fn color_gen(color_info: &Vec<HashMap<String, Vec<Infoitem>>>) {
+pub fn asource_gen(FileName : &PathBuf, color_info: &Vec<HashMap<String, Vec<StackItem>>>) -> Result<String, Box<Error>>{
+    let mut insert_holder: BTreeMap<usize, BTreeMap<usize, String>> = BTreeMap::new();
+    fn insert(insert_holder: &mut BTreeMap<usize, BTreeMap<usize, String>>, row: usize, col:usize, content: String) {
+        match insert_holder.get_mut(&row) {
+            Some(col_map) => {
+                col_map.insert(col, content);
+            },
+            None => {
+                let mut col_map = BTreeMap::new();
+                col_map.insert(col, content);
+                insert_holder.insert(row, col_map);
+            }
+        }
+    }
+    for i in color_info {
+        for (key, val) in i {
+            for item in val {
+                let hash_id = item.ItemOrig.hash();
+                match &item.SynInfo {
+                    Infoitem::Struct(itemstruct) => {
+                        let tag = format!("<tspan data-hash=\"{}\">", hash_id);
+                        insert(&mut insert_holder,
+                            itemstruct.ident.span().start().line,
+                            itemstruct.ident.span().start().column,
+                            tag);
+                        insert(&mut insert_holder,
+                            itemstruct.ident.span().end().line,
+                            itemstruct.ident.span().end().column,
+                            String::from("</tspan>"));
+                    },
+                    Infoitem::Func(itemfunc) => {
+                        let tag = format!("<tspan class=\"fn\" data-hash=\"0\" hash=\"{}\">", hash_id);
+                        insert(&mut insert_holder,
+                            itemfunc.sig.ident.span().start().line,
+                            itemfunc.sig.ident.span().start().column,
+                            tag);
+                        insert(&mut insert_holder,
+                            itemfunc.sig.ident.span().end().line,
+                            itemfunc.sig.ident.span().end().column,
+                            String::from("</tspan>"));
+                    },
+                    Infoitem::FnArg(itemarg) => {
+                        let tag = format!("<tspan data-hash=\"{}\">", hash_id);
+                        insert(&mut insert_holder,
+                            itemarg.span().start().line,
+                            itemarg.span().start().column,
+                            tag);
+                        insert(&mut insert_holder,
+                            itemarg.span().end().line,
+                            itemarg.span().end().column,
+                            String::from("</tspan>"));
+                    },
+                    Infoitem::Local(itemlocal) => {
+                        let tag = format!("<tspan data-hash=\"{}\">", hash_id);
+                        insert(&mut insert_holder,
+                            itemlocal.span().start().line,
+                            itemlocal.span().start().column,
+                            tag);
+                        insert(&mut insert_holder,
+                            itemlocal.span().end().line,
+                            itemlocal.span().end().column,
+                            String::from("</tspan>"));
+                    },
+                    Infoitem::Call(itemcall) => {
+                        let tag = format!("<tspan data-hash=\"{}\">", hash_id);
+                        insert(&mut insert_holder,
+                            itemcall.span().start().line,
+                            itemcall.span().start().column,
+                            tag);
+                        insert(&mut insert_holder,
+                            itemcall.span().end().line,
+                            itemcall.span().end().column,
+                            String::from("</tspan>"));
+                    },
+                    Infoitem::MethodCall(itemmcall) => {
+                        // println!("--------------");
+                        // println!("MethodCall found: {:?}", itemmcall);
+                        // println!("{:?}", itemmcall.span().start());
+                        // println!("{:?}", itemmcall.span().end());
+                        // println!("--------------");
+                    },
+                    Infoitem::Reference(itemref) => {
+                        // println!("--------------");
+                        // println!("Reference found: {:?}", itemref);
+                        // println!("{:?}", itemref.span().start());
+                        // println!("{:?}", itemref.span().end());
+                        // println!("--------------");
+                    },
+                    Infoitem::ExprStruct(itemstuexp) => {
+                        let tag = format!("<tspan data-hash=\"{}\">", hash_id);
+                        insert(&mut insert_holder,
+                            itemstuexp.span().start().line,
+                            itemstuexp.span().start().column,
+                            tag);
+                        insert(&mut insert_holder,
+                            itemstuexp.span().end().line,
+                            itemstuexp.span().end().column,
+                            String::from("</tspan>"));
+                    },
+                    Infoitem::Macro(itemmacro) => {
+                        let tag = format!("<tspan class=\"fn\" data-hash=\"0\" hash=\"{}\">", hash_id);
+                        insert(&mut insert_holder,
+                            itemmacro.ident.span().start().line,
+                            itemmacro.ident.span().start().column,
+                            tag);
+                        insert(&mut insert_holder,
+                            itemmacro.ident.span().end().line,
+                            itemmacro.ident.span().end().column,
+                            String::from("</tspan>"));
+                    }
+                }
+            }
+        }
+    }
+    // write into file
+    let mut output = String::new();
+    let file = File::open(FileName)?;
+    let reader = BufReader::new(file);
+    let mut line_num = 1;
+    let mut cursor = 0;
+    for line in reader.lines() {
+        match line {
+            Ok(ref v) => {
+                match insert_holder.get(&line_num) {
+                    Some(col_map) => {
+                        for (ky, val) in col_map {
+                            let word = &v[cursor..*ky];
+                            output.push_str(word);
+                            output.push_str(val);
+                            cursor=*ky;
+                        }
+                        output.push_str(&v[cursor..])
+                    },
+                    _ => {
+                        output.push_str(v);
+                    },
+                }
+            },
+            Err(ref e) => {println!("error parsing header: {:?}", e)},
+        }
+        cursor = 0;
+        output.push_str("\n");
+        line_num+=1;
+    }
+    println!("{}", output);
+    Ok(output)
     // For debug purposes:
     // for i in color_info {
     //     println!("In Scope: ");
@@ -88,11 +233,9 @@ fn color_gen(color_info: &Vec<HashMap<String, Vec<Infoitem>>>) {
     //     }
     //     println!("----------");
     // }
-
 }
 
 pub fn header_gen_str(var_alloc: &HashMap<String, Vec<Arc<ResourceAccessPoint>>>) -> String {
-    println!("{:?}", var_alloc);
     // generate header lines 
     let mut header = String::new();
     let mut struct_store: Vec<Struct> = Vec::new();
@@ -121,8 +264,6 @@ pub fn header_gen_str(var_alloc: &HashMap<String, Vec<Arc<ResourceAccessPoint>>>
             struct_owner.insert(i.hash, i.name);
         }
     }
-    println!("{:?}", struct_owner);
-    println!("{:?}", struct_member);
 
     for (key, val) in struct_owner {
         header.push_str(&format!("Struct {}{{", val));
@@ -145,22 +286,16 @@ pub fn header_gen_str(var_alloc: &HashMap<String, Vec<Arc<ResourceAccessPoint>>>
 
 fn struct_field_insert(syn_info: Infoitem,
     struct_type: String,
-    target_rap: ResourceAccessPoint,
+    mut target_rap: ResourceAccessPoint,
     data: &mut data_pkg,
     stack_num: usize) {
-        if data.var_alloc.contains_key(target_rap.name()) {
-            // TODO: add shadow RAP
-            // var_def[&get_identstr(&target_rap)].push(target_rap);
-        } else {
-            // add RAP
-            data.var_alloc.insert(target_rap.name().clone(), vec![Arc::new(target_rap.clone())]);
-        }
 
         let mut rap_arc: Option<Arc<ResourceAccessPoint>> = None;
         match data.var_def.get(&struct_type) {
             Some(field) => {
                 match field.get(target_rap.name()) {
                     Some(res) => {
+                        target_rap.hash_mod(res.hash().clone());
                         rap_arc = Some(res.clone());
                     },
                     _ => {
@@ -172,6 +307,15 @@ fn struct_field_insert(syn_info: Infoitem,
                 //ERROR!
             }
         }
+
+        if data.var_alloc.contains_key(target_rap.name()) {
+            // TODO: add shadow RAP
+            // var_def[&get_identstr(&target_rap)].push(target_rap);
+        } else {
+            // add RAP
+            data.var_alloc.insert(target_rap.name().clone(), vec![Arc::new(target_rap.clone())]);
+        }
+
         let stack_item = StackItem {
             SynInfo: syn_info,
             ItemOrig: Arc::clone(&rap_arc.unwrap()),
@@ -337,7 +481,6 @@ fn parse_item (items: &Vec<syn::Item>,
     data: &mut data_pkg,
     hash_num: &mut u64,
     stack_num: usize) {
-
     for item in items {
         // All items refer to https://docs.rs/syn/1.0.72/syn/enum.Item.html
         // TODO: macros, const, enums, structs... we only consider functions and struct here
@@ -348,14 +491,14 @@ fn parse_item (items: &Vec<syn::Item>,
         // clone of a reference??? or of the variable itself?
         match item {
             Item::Fn(func) => {
-                debug!("--------------");
-                debug!("func found: {}", func.sig.ident);
-                debug!("{:?}", func.span().start());
-                debug!("{:?}", func.span().end());
-                debug!("--------------");
                 // register func into var_def
                 let func_rap = ResourceAccessPoint::Function(Function{name: format!("{}", func.sig.ident), hash: hash_num.clone()});
                 *hash_num+=1;
+                debug!("--------------");
+                debug!("func found: {:?}", func_rap);
+                debug!("{:?}", func.span().start());
+                debug!("{:?}", func.span().end());
+                debug!("--------------");
                 // push stack and register func into color_info
                 data.color_info.push(HashMap::new());
                 var_allo_insert(Infoitem::Func(func.clone()), 
@@ -433,7 +576,7 @@ fn parse_item (items: &Vec<syn::Item>,
                                 }
                             );
                             *hash_num+=1;
-                            struct_def_insert(Infoitem::Struct(itemstruct.clone()), struct_type.clone(), struct_rap, data, stack_num);
+                            struct_def_insert(Infoitem::Struct(i.clone()), struct_type.clone(), struct_rap, data, stack_num);
                         }
                     },
                     _ => {
@@ -465,21 +608,19 @@ fn parse_stmt(stmt: &syn::Stmt,
     // Item => function definition, struct definition etc.
     // Expr => Expression without semicolon (return...)
     // Semi => Expression with semicolon
-    debug!("--------------");
-    debug!("stmt found");
-
-    let mut expr_pass = expr_derive {
-        name: String::from(""),
-        var_mut: false,
-        is_ref: false,
-        ref_mut: false,
-        is_struct: false,
-        hash: hash_num.clone(),
-    };
-    *hash_num+=1;
 
     match stmt {
         Stmt::Local(loc) => {
+            let mut expr_pass = expr_derive {
+                name: String::from(""),
+                var_mut: false,
+                is_ref: false,
+                ref_mut: false,
+                is_struct: false,
+                hash: hash_num.clone(),
+            };
+            *hash_num+=1;
+            let mut location_item = None;
             // let statement
             // save variable info
             match &loc.pat {
@@ -490,6 +631,7 @@ fn parse_stmt(stmt: &syn::Stmt,
                 // let a = *&&5;
                 // we assume that a is determined by the rhs of the eq whether it's an 'explict' is_ref
                 Pat::Ident(pat_ident) => {
+                    location_item = Some(pat_ident);
                     debug!("Owner found: {}, ref_mut: {:?}, ref: {:?}", pat_ident.ident, pat_ident.mutability, pat_ident.by_ref);
                     debug!("{:?}", pat_ident.ident.span().start());
                     debug!("{:?}", pat_ident.ident.span().end());
@@ -521,6 +663,7 @@ fn parse_stmt(stmt: &syn::Stmt,
                 // we assume that all let statement : let foo:i32 = 5;
                 Pat::Type(pat_type) => {
                     if let Pat::Ident(pat_ident) = &*pat_type.pat {
+                        location_item = Some(pat_ident);
                         expr_pass.name = String::from(format!("{}", pat_ident.ident));
                         if let Some(_mutability) = pat_ident.mutability {
                             expr_pass.var_mut = true;
@@ -582,7 +725,7 @@ fn parse_stmt(stmt: &syn::Stmt,
                     );
                 }
             }
-            var_allo_insert(Infoitem::Local(loc.clone()), expr_rap,
+            var_allo_insert(Infoitem::Local(location_item.unwrap().clone()), expr_rap,
             data, stack_num);
         },
         Stmt::Semi(exp, _) => {
@@ -614,10 +757,9 @@ fn parse_expr (expr: &syn::Expr,
     match expr {
         Expr::Call(exprcall) => {
             if let Expr::Path(exprpath) = &*exprcall.func {
-                // println!("func found: {:?}", exprpath);
                 let call_rap = ResourceAccessPoint::Function(Function{name: format!("{}", path_fmt(&exprpath)), hash: hash_num.clone()});
                 non_allo_insert(format!("{}", path_fmt(&exprpath)),
-                Infoitem::Call(exprcall.clone()), Some(call_rap),
+                Infoitem::Call(exprpath.clone()), Some(call_rap),
                 data, hash_num, stack_num);
             }
         },
@@ -663,17 +805,17 @@ fn parse_expr (expr: &syn::Expr,
                 for i in &expr_struct.fields {
                     match &i.member {
                         syn::Member::Named(Ident) => {
-                            let field = ResourceAccessPoint::Struct(
+                            let mut field = ResourceAccessPoint::Struct(
                                 Struct {
                                 name: format!("{}",Ident),
                                 //TODO: is it fine without clone?
-                                hash: stmt_derive.hash.clone(),
+                                hash: 0,
                                 owner: owner_hash,
                                 is_mut: false,
                                 is_member: true,
                                 }
                             );
-                            struct_field_insert(Infoitem::ExprStruct(expr_struct.clone()),
+                            struct_field_insert(Infoitem::ExprStruct(Ident.clone()),
                             struct_type.clone(), field, data, stack_num);
                         }
                         _ => {
@@ -688,11 +830,10 @@ fn parse_expr (expr: &syn::Expr,
             debug!("found macro");
             let macro_path = &_macro.mac.path;
             if let Some(macro_func) = macro_path.segments.first() {
-                debug!("found {}", macro_func.ident);
                 //only consider Println and assert here
                 let macro_rap = ResourceAccessPoint::Function(Function{name: format!("{}", macro_func.ident), hash: hash_num.clone()});
                 non_allo_insert(format!("{}", macro_func.ident),
-                Infoitem::Macro(_macro.clone()),
+                Infoitem::Macro(macro_func.clone()),
                 Some(macro_rap), data, hash_num, stack_num);
 
                 if macro_func.ident.to_string() == "println" {
