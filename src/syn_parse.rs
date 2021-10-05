@@ -1,11 +1,11 @@
+#![feature(get_mut_unchecked)]
 use syn::{Stmt, Expr, Pat, Item, FnArg, Type};
 use log::{debug, info};
-use std::collections::{HashSet, HashMap, BTreeMap};
+use std::collections::{HashMap, BTreeMap};
 use std::error::Error;
 use std::fs::File;
 use std::io::{Read, BufReader, BufRead};
 use std::path::PathBuf;
-use std::ptr;
 use syn::spanned::Spanned;
 use std::sync::Arc;
 use rustviz_lib::data::{ResourceAccessPoint, 
@@ -16,6 +16,26 @@ use rustviz_lib::data::{ResourceAccessPoint,
     Function};
 
 struct data_pkg {
+    ///
+    /// combo of data structures to pass between funcions
+    /// 
+    /// # color_info
+    /// 
+    /// a native stack that keep track information of identifiers
+    /// that need to be highlighted in annotated_source.
+    /// 
+    /// Vec(stack)<Map<ident_name, Vec(list of)<StackItem>>>
+    /// 
+    /// # var_alloc
+    /// 
+    /// a map that contain all the allocated variable information
+    /// to produce variable definition header in main.rs
+    /// 
+    /// Map<var_name, Vec<Arc<ResourceAccessPoint>>>
+    /// 
+    /// # var_def
+    /// 
+    /// a map that contain 
     color_info: Vec<HashMap<String, Vec<StackItem>>>,
     var_alloc: HashMap<String, Vec<Arc<ResourceAccessPoint>>>,
     var_def: HashMap<String, HashMap<String, Arc<ResourceAccessPoint>>> // struct only
@@ -23,12 +43,23 @@ struct data_pkg {
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
 pub struct StackItem {
+    ///
+    /// syn identified object registration used by color_info
+    /// with reference to the original ResourceAccessPoint 
+    /// in var_alloc and var_def.
+    ///
+    /// logic: only the items in var_def and var_alloc are 
+    /// considered to coloring
+    /// 
     SynInfo: Infoitem,
     ItemOrig: Arc<ResourceAccessPoint>,
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
 pub enum Infoitem {
+    ///
+    /// options of all the syn crate-identified object that we consier
+    /// 
     Struct(syn::Field), // struct definition
     Func(syn::ItemFn),
     FnArg(syn::FnArg),
@@ -41,20 +72,31 @@ pub enum Infoitem {
 }
 
 fn path_fmt(exprpath : &syn::ExprPath) -> String {
+    /// 
+    /// reconstruct ExprPath item to its original string
+    /// 
     let mut pathname = "".to_owned();
     for seg in exprpath.path.segments.iter() {
         pathname.push_str(&seg.ident.to_string());
         pathname.push_str(&String::from("::"));
-        // println!("{:?}", seg);
     }
     pathname[0..pathname.len()-2].to_string()
 }
 
 pub fn syn_parse(FileName : &PathBuf) 
     -> Result<(HashMap<String, Vec<Arc<ResourceAccessPoint>>>, Vec<HashMap<String, Vec<StackItem>>>), Box<Error>> {    
-    // let mut file = File::open("/Users/haochenz/Desktop/rustviz/src/examples/hatra1/main.rs")?;
+    ///
+    /// initiate parameters for parse_item() call
+    /// 
+    /// # FileName
+    /// 
+    /// PathBuf::from(source_file_destination)
+    /// 
+    /// # return
+    /// 
+    /// Result<(var_alloc, color_info), ERROR)
+    /// 
     let mut file = File::open(FileName)?;
-    // let mut file = File::open("/Users/haochenz/Desktop/playgroud/parse/src/test.rs")?;
     let mut content = String::new();
     file.read_to_string(&mut content)?;
     let ast = syn::parse_file(&content)?;
@@ -71,7 +113,43 @@ pub fn syn_parse(FileName : &PathBuf)
     Ok((data_pkg.var_alloc, data_pkg.color_info))
 }
 
-pub fn asource_gen(FileName : &PathBuf, color_info: &Vec<HashMap<String, Vec<StackItem>>>) -> Result<String, Box<Error>>{
+// pub fn hash_correction(color_info: &mut Vec<HashMap<String, Vec<StackItem>>>, var_map: &HashMap<String, ResourceAccessPoint>) {
+//     println!("{:?}", var_map.get("println!()"));
+//     for stack_item in color_info.iter_mut() {
+//         for (name, stack_vec) in stack_item {
+//             println!("{:?}", name);
+//             println!("------------------");
+//             if let Some(rap_item) = var_map.get(name) {
+//                 // assume no variable shadowing is needed
+//                 println!("{:?}", &stack_vec[0].ItemOrig);
+//                 println!("{:?}", rap_item);
+//                 for i in stack_vec {
+//                     println!("{:?}", &mut i.ItemOrig);
+//                     println!("{:?}", Arc::get_mut(&mut i.ItemOrig));
+//                     // Arc::get_mut(mut i.ItemOrig).hash_mod(rap_item.hash().clone());
+//                     unsafe {
+//                         Arc::get_mut_unchecked(&mut i.ItemOrig).unwrap().hash_mod(rap_item.hash().clone());
+//                     }
+//                 }
+//             } else {
+//                 println!("{:?}", stack_vec[0].ItemOrig);
+//             }
+//         } 
+//     }
+// }
+
+pub fn asource_gen(FileName : &PathBuf, color_info: &Vec<HashMap<String, Vec<StackItem>>>, var_map: &HashMap<String, ResourceAccessPoint>) -> Result<String, Box<Error>>{
+    ///
+    /// Generate annotated source and write into file
+    /// 
+    /// # FileName
+    /// 
+    /// PathBuf::from(source_file_destination)
+    /// 
+    /// # color_info
+    /// 
+    /// color_info 
+    /// 
     let mut insert_holder: BTreeMap<usize, BTreeMap<usize, String>> = BTreeMap::new();
     fn insert(insert_holder: &mut BTreeMap<usize, BTreeMap<usize, String>>, row: usize, col:usize, content: String) {
         match insert_holder.get_mut(&row) {
@@ -86,100 +164,103 @@ pub fn asource_gen(FileName : &PathBuf, color_info: &Vec<HashMap<String, Vec<Sta
         }
     }
     for i in color_info {
-        for (key, val) in i {
-            for item in val {
-                let hash_id = item.ItemOrig.hash();
-                match &item.SynInfo {
-                    Infoitem::Struct(itemstruct) => {
-                        let tag = format!("<tspan data-hash=\"{}\">", hash_id);
-                        insert(&mut insert_holder,
-                            itemstruct.ident.span().start().line,
-                            itemstruct.ident.span().start().column,
-                            tag);
-                        insert(&mut insert_holder,
-                            itemstruct.ident.span().end().line,
-                            itemstruct.ident.span().end().column,
-                            String::from("</tspan>"));
-                    },
-                    Infoitem::Func(itemfunc) => {
-                        let tag = format!("<tspan class=\"fn\" data-hash=\"0\" hash=\"{}\">", hash_id);
-                        insert(&mut insert_holder,
-                            itemfunc.sig.ident.span().start().line,
-                            itemfunc.sig.ident.span().start().column,
-                            tag);
-                        insert(&mut insert_holder,
-                            itemfunc.sig.ident.span().end().line,
-                            itemfunc.sig.ident.span().end().column,
-                            String::from("</tspan>"));
-                    },
-                    Infoitem::FnArg(itemarg) => {
-                        let tag = format!("<tspan data-hash=\"{}\">", hash_id);
-                        insert(&mut insert_holder,
-                            itemarg.span().start().line,
-                            itemarg.span().start().column,
-                            tag);
-                        insert(&mut insert_holder,
-                            itemarg.span().end().line,
-                            itemarg.span().end().column,
-                            String::from("</tspan>"));
-                    },
-                    Infoitem::Local(itemlocal) => {
-                        let tag = format!("<tspan data-hash=\"{}\">", hash_id);
-                        insert(&mut insert_holder,
-                            itemlocal.span().start().line,
-                            itemlocal.span().start().column,
-                            tag);
-                        insert(&mut insert_holder,
-                            itemlocal.span().end().line,
-                            itemlocal.span().end().column,
-                            String::from("</tspan>"));
-                    },
-                    Infoitem::Call(itemcall) => {
-                        let tag = format!("<tspan data-hash=\"{}\">", hash_id);
-                        insert(&mut insert_holder,
-                            itemcall.span().start().line,
-                            itemcall.span().start().column,
-                            tag);
-                        insert(&mut insert_holder,
-                            itemcall.span().end().line,
-                            itemcall.span().end().column,
-                            String::from("</tspan>"));
-                    },
-                    Infoitem::MethodCall(itemmcall) => {
-                        // println!("--------------");
-                        // println!("MethodCall found: {:?}", itemmcall);
-                        // println!("{:?}", itemmcall.span().start());
-                        // println!("{:?}", itemmcall.span().end());
-                        // println!("--------------");
-                    },
-                    Infoitem::Reference(itemref) => {
-                        // println!("--------------");
-                        // println!("Reference found: {:?}", itemref);
-                        // println!("{:?}", itemref.span().start());
-                        // println!("{:?}", itemref.span().end());
-                        // println!("--------------");
-                    },
-                    Infoitem::ExprStruct(itemstuexp) => {
-                        let tag = format!("<tspan data-hash=\"{}\">", hash_id);
-                        insert(&mut insert_holder,
-                            itemstuexp.span().start().line,
-                            itemstuexp.span().start().column,
-                            tag);
-                        insert(&mut insert_holder,
-                            itemstuexp.span().end().line,
-                            itemstuexp.span().end().column,
-                            String::from("</tspan>"));
-                    },
-                    Infoitem::Macro(itemmacro) => {
-                        let tag = format!("<tspan class=\"fn\" data-hash=\"0\" hash=\"{}\">", hash_id);
-                        insert(&mut insert_holder,
-                            itemmacro.ident.span().start().line,
-                            itemmacro.ident.span().start().column,
-                            tag);
-                        insert(&mut insert_holder,
-                            itemmacro.ident.span().end().line,
-                            itemmacro.ident.span().end().column,
-                            String::from("</tspan>"));
+        for (name_str, stack_vec) in i {
+            // println!("{:?}", name_str);
+            if let Some(rap_item) = var_map.get(name_str) {
+                let hash_id = rap_item.hash();
+                for item in stack_vec {
+                    match &item.SynInfo {
+                        Infoitem::Struct(itemstruct) => {
+                            let tag = format!("<tspan data-hash=\"{}\">", hash_id);
+                            insert(&mut insert_holder,
+                                itemstruct.ident.span().start().line,
+                                itemstruct.ident.span().start().column,
+                                tag);
+                            insert(&mut insert_holder,
+                                itemstruct.ident.span().end().line,
+                                itemstruct.ident.span().end().column,
+                                String::from("</tspan>"));
+                        },
+                        Infoitem::Func(itemfunc) => {
+                            let tag = format!("<tspan class=\"fn\" data-hash=\"0\" hash=\"{}\">", hash_id);
+                            insert(&mut insert_holder,
+                                itemfunc.sig.ident.span().start().line,
+                                itemfunc.sig.ident.span().start().column,
+                                tag);
+                            insert(&mut insert_holder,
+                                itemfunc.sig.ident.span().end().line,
+                                itemfunc.sig.ident.span().end().column,
+                                String::from("</tspan>"));
+                        },
+                        Infoitem::FnArg(itemarg) => {
+                            let tag = format!("<tspan data-hash=\"{}\">", hash_id);
+                            insert(&mut insert_holder,
+                                itemarg.span().start().line,
+                                itemarg.span().start().column,
+                                tag);
+                            insert(&mut insert_holder,
+                                itemarg.span().end().line,
+                                itemarg.span().end().column,
+                                String::from("</tspan>"));
+                        },
+                        Infoitem::Local(itemlocal) => {
+                            let tag = format!("<tspan data-hash=\"{}\">", hash_id);
+                            insert(&mut insert_holder,
+                                itemlocal.span().start().line,
+                                itemlocal.span().start().column,
+                                tag);
+                            insert(&mut insert_holder,
+                                itemlocal.span().end().line,
+                                itemlocal.span().end().column,
+                                String::from("</tspan>"));
+                        },
+                        Infoitem::Call(itemcall) => {
+                            let tag = format!("<tspan class=\"fn\" data-hash=\"0\" hash=\"{}\">", hash_id);
+                            insert(&mut insert_holder,
+                                itemcall.span().start().line,
+                                itemcall.span().start().column,
+                                tag);
+                            insert(&mut insert_holder,
+                                itemcall.span().end().line,
+                                itemcall.span().end().column,
+                                String::from("</tspan>"));
+                        },
+                        Infoitem::MethodCall(itemmcall) => {
+                            // println!("--------------");
+                            // println!("MethodCall found: {:?}", itemmcall);
+                            // println!("{:?}", itemmcall.span().start());
+                            // println!("{:?}", itemmcall.span().end());
+                            // println!("--------------");
+                        },
+                        Infoitem::Reference(itemref) => {
+                            // println!("--------------");
+                            // println!("Reference found: {:?}", itemref);
+                            // println!("{:?}", itemref.span().start());
+                            // println!("{:?}", itemref.span().end());
+                            // println!("--------------");
+                        },
+                        Infoitem::ExprStruct(itemstuexp) => {
+                            let tag = format!("<tspan data-hash=\"{}\">", hash_id);
+                            insert(&mut insert_holder,
+                                itemstuexp.span().start().line,
+                                itemstuexp.span().start().column,
+                                tag);
+                            insert(&mut insert_holder,
+                                itemstuexp.span().end().line,
+                                itemstuexp.span().end().column,
+                                String::from("</tspan>"));
+                        },
+                        Infoitem::Macro(itemmacro) => {
+                            let tag = format!("<tspan class=\"fn\" data-hash=\"0\" hash=\"{}\">", hash_id);
+                            insert(&mut insert_holder,
+                                itemmacro.ident.span().start().line,
+                                itemmacro.ident.span().start().column,
+                                tag);
+                            insert(&mut insert_holder,
+                                itemmacro.ident.span().end().line,
+                                itemmacro.ident.span().end().column+1, // compensate for '!'
+                                String::from("</tspan>"));
+                        }
                     }
                 }
             }
@@ -215,7 +296,7 @@ pub fn asource_gen(FileName : &PathBuf, color_info: &Vec<HashMap<String, Vec<Sta
         output.push_str("\n");
         line_num+=1;
     }
-    println!("{}", output);
+    // println!("{}", output);
     Ok(output)
     // For debug purposes:
     // for i in color_info {
@@ -379,6 +460,10 @@ fn var_allo_insert(syn_info: Infoitem,
     // is_def is true for struct declaraion
     // Struct(syn::ItemStruct)
     // ----------------------------------
+    if target_rap.name() == &"main()" {
+        // avoid main() here
+        return
+    }
     let rap_arc = Arc::new(target_rap.clone());
     let stack_item = StackItem {
         SynInfo: syn_info,
@@ -492,7 +577,7 @@ fn parse_item (items: &Vec<syn::Item>,
         match item {
             Item::Fn(func) => {
                 // register func into var_def
-                let func_rap = ResourceAccessPoint::Function(Function{name: format!("{}", func.sig.ident), hash: hash_num.clone()});
+                let func_rap = ResourceAccessPoint::Function(Function{name: format!("{}()", func.sig.ident), hash: hash_num.clone()});
                 *hash_num+=1;
                 debug!("--------------");
                 debug!("func found: {:?}", func_rap);
@@ -758,7 +843,7 @@ fn parse_expr (expr: &syn::Expr,
         Expr::Call(exprcall) => {
             if let Expr::Path(exprpath) = &*exprcall.func {
                 let call_rap = ResourceAccessPoint::Function(Function{name: format!("{}", path_fmt(&exprpath)), hash: hash_num.clone()});
-                non_allo_insert(format!("{}", path_fmt(&exprpath)),
+                non_allo_insert(format!("{}()", path_fmt(&exprpath)),
                 Infoitem::Call(exprpath.clone()), Some(call_rap),
                 data, hash_num, stack_num);
             }
@@ -767,7 +852,7 @@ fn parse_expr (expr: &syn::Expr,
             let m_call = String::from(format!("{}", exprm_call.method));
             debug!("func found: {}",  m_call);
             let mcall_rap = ResourceAccessPoint::Function(Function{name: format!("{}",  m_call), hash: hash_num.clone()});
-            non_allo_insert(format!("{}", m_call),
+            non_allo_insert(format!("{}()", m_call),
             Infoitem::MethodCall(exprm_call.clone()),
             Some(mcall_rap), data, hash_num, stack_num);
         },
@@ -831,8 +916,8 @@ fn parse_expr (expr: &syn::Expr,
             let macro_path = &_macro.mac.path;
             if let Some(macro_func) = macro_path.segments.first() {
                 //only consider Println and assert here
-                let macro_rap = ResourceAccessPoint::Function(Function{name: format!("{}", macro_func.ident), hash: hash_num.clone()});
-                non_allo_insert(format!("{}", macro_func.ident),
+                let macro_rap = ResourceAccessPoint::Function(Function{name: format!("{}!()", macro_func.ident), hash: hash_num.clone()});
+                non_allo_insert(format!("{}!()", macro_func.ident),
                 Infoitem::Macro(macro_func.clone()),
                 Some(macro_rap), data, hash_num, stack_num);
 

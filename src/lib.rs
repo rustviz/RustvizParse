@@ -7,8 +7,8 @@ mod tests {
 
     #[test]
      fn test() {
-        let file_name = PathBuf::from("/Users/haochenz/Desktop/rustviz/src/examples/hatra1/main.rs");
-        println!("{:?}", FileName);
+        let file_source = PathBuf::from("/Users/haochenz/Desktop/rustviz/src/examples/struct_rect/source.rs");
+        let annotated_source = PathBuf::from("/Users/haochenz/Desktop/rustviz/src/examples/struct_rect/input/annotated_source.rs");
         let parse_res = syn_parse(&file_name);
         match parse_res {
             Ok((rap, color_info)) => {
