@@ -14,6 +14,7 @@ use rustviz_lib::data::{ResourceAccessPoint,
     MutRef,
     StaticRef,
     Function};
+use proc_macro2::{Ident, Span};
 
 struct data_pkg {
     ///
@@ -62,13 +63,14 @@ pub enum Infoitem {
     /// 
     Struct(syn::Field), // struct definition
     Func(syn::ItemFn),
-    FnArg(syn::FnArg),
+    FnArg(syn::Ident),
     Local(syn::PatIdent), //let a = 5;
     Call(syn::ExprPath), // func_cal();
     MethodCall(syn::ExprMethodCall), // a.to_string();
     Reference(syn::ExprReference), // &a;
     ExprStruct(syn::Ident), // struct literal expression
-    Macro(syn::PathSegment)
+    Macro(syn::PathSegment),
+    Path(syn::ExprPath)
 }
 
 fn path_fmt(exprpath : &syn::ExprPath) -> String {
@@ -163,12 +165,18 @@ pub fn asource_gen(FileName : &PathBuf, color_info: &Vec<HashMap<String, Vec<Sta
             }
         }
     }
+    println!("--------print var_map-------");
+    println!("{:?}", var_map);
+    println!("--------done print var_map-------");
     for i in color_info {
         for (name_str, stack_vec) in i {
             // println!("{:?}", name_str);
             if let Some(rap_item) = var_map.get(name_str) {
+                println!("-------------------");
+                println!("{:?}", rap_item);
                 let hash_id = rap_item.hash();
                 for item in stack_vec {
+                    println!("{:?}", item);
                     match &item.SynInfo {
                         Infoitem::Struct(itemstruct) => {
                             let tag = format!("<tspan data-hash=\"{}\">", hash_id);
@@ -206,8 +214,8 @@ pub fn asource_gen(FileName : &PathBuf, color_info: &Vec<HashMap<String, Vec<Sta
                         Infoitem::Local(itemlocal) => {
                             let tag = format!("<tspan data-hash=\"{}\">", hash_id);
                             insert(&mut insert_holder,
-                                itemlocal.span().start().line,
-                                itemlocal.span().start().column,
+                                itemlocal.ident.span().start().line,
+                                itemlocal.ident.span().start().column,
                                 tag);
                             insert(&mut insert_holder,
                                 itemlocal.span().end().line,
@@ -226,18 +234,26 @@ pub fn asource_gen(FileName : &PathBuf, color_info: &Vec<HashMap<String, Vec<Sta
                                 String::from("</tspan>"));
                         },
                         Infoitem::MethodCall(itemmcall) => {
-                            // println!("--------------");
-                            // println!("MethodCall found: {:?}", itemmcall);
-                            // println!("{:?}", itemmcall.span().start());
-                            // println!("{:?}", itemmcall.span().end());
-                            // println!("--------------");
+                            let tag = format!("<tspan class=\"fn\" data-hash=\"0\" hash=\"{}\">", hash_id);
+                            insert(&mut insert_holder,
+                                itemmcall.method.span().start().line,
+                                itemmcall.method.span().start().column,
+                                tag);
+                            insert(&mut insert_holder,
+                                itemmcall.span().end().line,
+                                itemmcall.span().end().column,
+                                String::from("</tspan>"));
                         },
                         Infoitem::Reference(itemref) => {
-                            // println!("--------------");
-                            // println!("Reference found: {:?}", itemref);
-                            // println!("{:?}", itemref.span().start());
-                            // println!("{:?}", itemref.span().end());
-                            // println!("--------------");
+                            let tag = format!("<tspan data-hash=\"{}\">", hash_id);
+                            insert(&mut insert_holder,
+                                itemref.span().start().line,
+                                itemref.span().start().column,
+                                tag);
+                            insert(&mut insert_holder,
+                                itemref.span().end().line,
+                                itemref.span().end().column,
+                                String::from("</tspan>"));
                         },
                         Infoitem::ExprStruct(itemstuexp) => {
                             let tag = format!("<tspan data-hash=\"{}\">", hash_id);
@@ -260,6 +276,17 @@ pub fn asource_gen(FileName : &PathBuf, color_info: &Vec<HashMap<String, Vec<Sta
                                 itemmacro.ident.span().end().line,
                                 itemmacro.ident.span().end().column+1, // compensate for '!'
                                 String::from("</tspan>"));
+                        },
+                        Infoitem::Path(itempath) => {
+                            let tag = format!("<tspan data-hash=\"{}\">", hash_id);
+                            insert(&mut insert_holder,
+                                itempath.span().start().line,
+                                itempath.span().start().column,
+                                tag);
+                            insert(&mut insert_holder,
+                                itempath.span().end().line,
+                                itempath.span().end().column,
+                                String::from("</tspan>"));
                         }
                     }
                 }
@@ -275,18 +302,32 @@ pub fn asource_gen(FileName : &PathBuf, color_info: &Vec<HashMap<String, Vec<Sta
     for line in reader.lines() {
         match line {
             Ok(ref v) => {
+                // output = output.replace("&", "&amp;");
                 match insert_holder.get(&line_num) {
                     Some(col_map) => {
                         for (ky, val) in col_map {
-                            let word = &v[cursor..*ky];
-                            output.push_str(word);
+                            let mut word = v[cursor..*ky].to_string();
+                            word = word.replace("&", "&amp;");
+                            word = word.replace("<", "&lt;");
+                            word = word.replace(">", "&gt;");
+                            output.push_str(&word);
                             output.push_str(val);
                             cursor=*ky;
                         }
-                        output.push_str(&v[cursor..])
+                        // println!("{}", &v[cursor..]);
+                        let mut tail = v[cursor..].to_string();
+                        tail = tail.replace("&", "&amp;");
+                        tail = tail.replace("<", "&lt;");
+                        tail = tail.replace(">", "&gt;");
+                        output.push_str(&tail);
                     },
                     _ => {
-                        output.push_str(v);
+                        // println!("{}", v);
+                        let mut mut_v = v.clone();
+                        mut_v = mut_v.replace("&", "&amp;");
+                        mut_v = mut_v.replace("<", "&lt;");
+                        mut_v = mut_v.replace(">", "&gt;");
+                        output.push_str(&mut_v);
                     },
                 }
             },
@@ -296,7 +337,7 @@ pub fn asource_gen(FileName : &PathBuf, color_info: &Vec<HashMap<String, Vec<Sta
         output.push_str("\n");
         line_num+=1;
     }
-    // println!("{}", output);
+    // replace & with &amp;
     Ok(output)
     // For debug purposes:
     // for i in color_info {
@@ -365,14 +406,52 @@ pub fn header_gen_str(var_alloc: &HashMap<String, Vec<Arc<ResourceAccessPoint>>>
     header
 }
 
-fn struct_field_insert(syn_info: Infoitem,
-    struct_type: String,
+// fn struct_field_insert(syn_info: Infoitem,
+//     base_name: String,
+//     data: &mut data_pkg,
+//     stack_num: usize) {
+//         // used for struct field access
+//         // ex: obj.k
+
+//         let mut rap_arc: Option<Arc<ResourceAccessPoint>> = None;
+//         // get base information
+//         match data.var_alloc.get(&base_name) {
+//             Some(base) => {
+//                 // do not consider shadowing
+//                 rap_arc = Some(base[0].clone());
+//             },
+//             _ => {
+//                 //ERROR
+//             }
+//         }
+
+//         // insert into color_info
+//         let stack_item = StackItem {
+//             SynInfo: syn_info,
+//             ItemOrig: Arc::clone(&rap_arc.unwrap()),
+//         };
+//         // push into stack
+//         let stut_fieldname = format!("{}.{}",owner_name, target_rap.name());
+//         match data.color_info[stack_num].get_mut(&stut_fieldname) {
+//             Some(var_map) => {
+//                 var_map.push(stack_item);
+//             },
+//             None => {
+//                 data.color_info[stack_num].insert(stut_fieldname.clone(), vec![stack_item]);
+//             }
+//         }
+// }
+
+fn struct_expr_insert(syn_info: Infoitem,
+    struct_name: String,
     mut target_rap: ResourceAccessPoint,
     data: &mut data_pkg,
-    stack_num: usize) {
-
+    stack_num: usize,
+    owner_name: &String) {
+        // used for inserting struct expression:
+        // ex: Point { x: 1, y: 1 }
         let mut rap_arc: Option<Arc<ResourceAccessPoint>> = None;
-        match data.var_def.get(&struct_type) {
+        match data.var_def.get(&struct_name) {
             Some(field) => {
                 match field.get(target_rap.name()) {
                     Some(res) => {
@@ -402,12 +481,13 @@ fn struct_field_insert(syn_info: Infoitem,
             ItemOrig: Arc::clone(&rap_arc.unwrap()),
         };
         // push into stack
-        match data.color_info[stack_num].get_mut(target_rap.name()) {
+        let stut_fieldname = format!("{}.{}",owner_name, target_rap.name());
+        match data.color_info[stack_num].get_mut(&stut_fieldname) {
             Some(var_map) => {
                 var_map.push(stack_item);
             },
             None => {
-                data.color_info[stack_num].insert(target_rap.name().clone(), vec![stack_item]);
+                data.color_info[stack_num].insert(stut_fieldname.clone(), vec![stack_item]);
             }
         }
     }
@@ -417,6 +497,7 @@ fn struct_def_insert(syn_info: Infoitem,
     target_rap: ResourceAccessPoint,
     data: &mut data_pkg,
     stack_num: usize) {
+        // used for struct definition
         let rap_arc = Arc::new(target_rap.clone());
         let stack_item = StackItem {
             SynInfo: syn_info,
@@ -559,8 +640,6 @@ fn non_allo_insert(ident: String,
     }
 }
 
-
-
 //TODO: do I need to specify same lifetime for color_info and var_def
 fn parse_item (items: &Vec<syn::Item>, 
     data: &mut data_pkg,
@@ -598,6 +677,7 @@ fn parse_item (items: &Vec<syn::Item>,
                                 // match arg type
                                 let mut func_argname = String::new();
                                 let mut is_mut = false;
+                                let mut p_ident = Ident::new("calligraphy", Span::call_site());
                                 debug!("--------------");
                                 // extract arg ident
                                 match &*pat_type.pat {
@@ -607,6 +687,7 @@ fn parse_item (items: &Vec<syn::Item>,
                                         if let Some(_mutability) = &pat_ident.mutability {
                                             is_mut = true;
                                         }
+                                        p_ident = pat_ident.ident.clone();
                                         // debug!("arg found: {:?}", func_arg.name);
                                     },
                                     _ => info!("function arg name not supported")
@@ -633,7 +714,7 @@ fn parse_item (items: &Vec<syn::Item>,
                                     }
                                     _ => info!("function arg type not supported")
                                 }
-                                var_allo_insert(Infoitem::FnArg(arg.clone()), 
+                                var_allo_insert(Infoitem::FnArg(p_ident), 
                                 arg_rap, data, stack_num+1);
                             },
                             _ => info!("syn::Receiver <self> not supported")
@@ -676,6 +757,7 @@ fn parse_item (items: &Vec<syn::Item>,
 }
 
 // used to derive info from expr parse after eq sign
+#[derive(Debug)]
 struct expr_derive {
     name: String,
     var_mut: bool,
@@ -838,14 +920,26 @@ fn parse_expr (expr: &syn::Expr,
 
     debug!("--------------");
     debug!("expr found");
-
+    println!("{:?}", expr);
     match expr {
+        Expr::Assign(expr_assign) => {
+            parse_expr(&expr_assign.left, None, data, hash_num, stack_num);
+            parse_expr(&expr_assign.right, None, data, hash_num, stack_num);
+        },
+        Expr::Path(expr_path) => {
+            non_allo_insert(format!("{}", path_fmt(&expr_path)),
+                Infoitem::Path(expr_path.clone()),
+                None, data, hash_num, stack_num);
+        }
         Expr::Call(exprcall) => {
             if let Expr::Path(exprpath) = &*exprcall.func {
                 let call_rap = ResourceAccessPoint::Function(Function{name: format!("{}", path_fmt(&exprpath)), hash: hash_num.clone()});
                 non_allo_insert(format!("{}()", path_fmt(&exprpath)),
                 Infoitem::Call(exprpath.clone()), Some(call_rap),
                 data, hash_num, stack_num);
+            }
+            for arg in &exprcall.args {
+                parse_expr(arg, None, data, hash_num, stack_num);
             }
         },
         Expr::MethodCall(exprm_call) => {
@@ -855,6 +949,11 @@ fn parse_expr (expr: &syn::Expr,
             non_allo_insert(format!("{}()", m_call),
             Infoitem::MethodCall(exprm_call.clone()),
             Some(mcall_rap), data, hash_num, stack_num);
+
+            parse_expr(&*exprm_call.receiver, None, data, hash_num, stack_num);
+            for arg in &exprm_call.args {
+                parse_expr(arg, None, data, hash_num, stack_num);
+            }
         },
         Expr::Reference(expred) => {
             debug!("Owner's a is_ref: {:?}", expred.mutability);
@@ -880,8 +979,11 @@ fn parse_expr (expr: &syn::Expr,
                 parse_stmt(&stmt, data, hash_num, stack_num+1);
             }
         },
+        Expr::Binary(expr_bin) => {
+            parse_expr(&expr_bin.left, None, data, hash_num, stack_num);
+            parse_expr(&expr_bin.right, None, data, hash_num, stack_num);
+        }, 
         Expr::Struct(expr_struct) => {
-            //TODO: take care of struct later
             debug!("found struct");
             let struct_type = format!("{}", expr_struct.path.segments[expr_struct.path.segments.len()-1].ident);
             if let Some(stmt_derive) = stmt_pass {
@@ -890,7 +992,7 @@ fn parse_expr (expr: &syn::Expr,
                 for i in &expr_struct.fields {
                     match &i.member {
                         syn::Member::Named(Ident) => {
-                            let mut field = ResourceAccessPoint::Struct(
+                            let field = ResourceAccessPoint::Struct(
                                 Struct {
                                 name: format!("{}",Ident),
                                 //TODO: is it fine without clone?
@@ -900,17 +1002,32 @@ fn parse_expr (expr: &syn::Expr,
                                 is_member: true,
                                 }
                             );
-                            struct_field_insert(Infoitem::ExprStruct(Ident.clone()),
-                            struct_type.clone(), field, data, stack_num);
+                            struct_expr_insert(Infoitem::ExprStruct(Ident.clone()),
+                            struct_type.clone(), field, data, stack_num, &stmt_derive.name);
                         }
                         _ => {
                             info!("struct type not supported")
                         }
-                    }
+                    }   
+                    parse_expr(&i.expr, None, data, hash_num, stack_num);
                 }
             }
         },
-
+        Expr::Field(expr_field) => {
+            // parse_expr(&*expr_field.base, None, data, hash_num, stack_num);
+            // if let Expr::Path(base_expr) = &*expr_field.base {
+            //     let base_name = format!("{}", path_fmt(&base_expr));
+            //     match &expr_field.member {
+            //         syn::Member::Named(Ident) => {
+            //             struct_field_insert(Infoitem::ExprStruct(Ident.clone()),
+            //             base_name.clone(), data, stack_num);
+            //         }
+            //         _ => {
+            //             info!("struct type not supported")
+            //         }
+            //     } 
+            // }
+        },
         Expr::Macro(_macro) => {
             debug!("found macro");
             let macro_path = &_macro.mac.path;
