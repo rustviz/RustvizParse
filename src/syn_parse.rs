@@ -68,6 +68,7 @@ pub enum Infoitem {
     Call(syn::ExprPath), // func_cal();
     MethodCall(syn::ExprMethodCall), // a.to_string();
     Reference(syn::ExprReference), // &a;
+    Dereference(syn::ExprUnary), //*a;
     ExprStruct(syn::Ident), // struct literal expression
     Macro(syn::PathSegment),
     Path(syn::ExprPath)
@@ -114,31 +115,6 @@ pub fn syn_parse(FileName : &PathBuf)
     // color_gen(&color_info);
     Ok((data_pkg.var_alloc, data_pkg.color_info))
 }
-
-// pub fn hash_correction(color_info: &mut Vec<HashMap<String, Vec<StackItem>>>, var_map: &HashMap<String, ResourceAccessPoint>) {
-//     println!("{:?}", var_map.get("println!()"));
-//     for stack_item in color_info.iter_mut() {
-//         for (name, stack_vec) in stack_item {
-//             println!("{:?}", name);
-//             println!("------------------");
-//             if let Some(rap_item) = var_map.get(name) {
-//                 // assume no variable shadowing is needed
-//                 println!("{:?}", &stack_vec[0].ItemOrig);
-//                 println!("{:?}", rap_item);
-//                 for i in stack_vec {
-//                     println!("{:?}", &mut i.ItemOrig);
-//                     println!("{:?}", Arc::get_mut(&mut i.ItemOrig));
-//                     // Arc::get_mut(mut i.ItemOrig).hash_mod(rap_item.hash().clone());
-//                     unsafe {
-//                         Arc::get_mut_unchecked(&mut i.ItemOrig).unwrap().hash_mod(rap_item.hash().clone());
-//                     }
-//                 }
-//             } else {
-//                 println!("{:?}", stack_vec[0].ItemOrig);
-//             }
-//         } 
-//     }
-// }
 
 pub fn asource_gen(FileName : &PathBuf, color_info: &Vec<HashMap<String, Vec<StackItem>>>, var_map: &HashMap<String, ResourceAccessPoint>) -> Result<String, Box<Error>>{
     ///
@@ -240,11 +216,23 @@ pub fn asource_gen(FileName : &PathBuf, color_info: &Vec<HashMap<String, Vec<Sta
                                 itemmcall.method.span().start().column,
                                 tag);
                             insert(&mut insert_holder,
-                                itemmcall.span().end().line,
-                                itemmcall.span().end().column,
+                                itemmcall.method.span().end().line,
+                                itemmcall.method.span().end().column,
                                 String::from("</tspan>"));
                         },
                         Infoitem::Reference(itemref) => {
+                            let tag = format!("<tspan data-hash=\"{}\">", hash_id);
+                            
+                            insert(&mut insert_holder,
+                                itemref.span().start().line,
+                                itemref.span().start().column,
+                                tag);
+                            insert(&mut insert_holder,
+                                itemref.span().end().line,
+                                itemref.span().end().column,
+                                String::from("</tspan>"));
+                        },
+                        Infoitem::Dereference(itemref) => {
                             let tag = format!("<tspan data-hash=\"{}\">", hash_id);
                             insert(&mut insert_holder,
                                 itemref.span().start().line,
@@ -337,6 +325,7 @@ pub fn asource_gen(FileName : &PathBuf, color_info: &Vec<HashMap<String, Vec<Sta
         output.push_str("\n");
         line_num+=1;
     }
+    output.pop();
     // replace & with &amp;
     Ok(output)
     // For debug purposes:
@@ -405,42 +394,6 @@ pub fn header_gen_str(var_alloc: &HashMap<String, Vec<Arc<ResourceAccessPoint>>>
     header.push_str("--- END Variable Definitions --- */\n");
     header
 }
-
-// fn struct_field_insert(syn_info: Infoitem,
-//     base_name: String,
-//     data: &mut data_pkg,
-//     stack_num: usize) {
-//         // used for struct field access
-//         // ex: obj.k
-
-//         let mut rap_arc: Option<Arc<ResourceAccessPoint>> = None;
-//         // get base information
-//         match data.var_alloc.get(&base_name) {
-//             Some(base) => {
-//                 // do not consider shadowing
-//                 rap_arc = Some(base[0].clone());
-//             },
-//             _ => {
-//                 //ERROR
-//             }
-//         }
-
-//         // insert into color_info
-//         let stack_item = StackItem {
-//             SynInfo: syn_info,
-//             ItemOrig: Arc::clone(&rap_arc.unwrap()),
-//         };
-//         // push into stack
-//         let stut_fieldname = format!("{}.{}",owner_name, target_rap.name());
-//         match data.color_info[stack_num].get_mut(&stut_fieldname) {
-//             Some(var_map) => {
-//                 var_map.push(stack_item);
-//             },
-//             None => {
-//                 data.color_info[stack_num].insert(stut_fieldname.clone(), vec![stack_item]);
-//             }
-//         }
-// }
 
 fn struct_expr_insert(syn_info: Infoitem,
     struct_name: String,
@@ -918,7 +871,7 @@ fn parse_expr (expr: &syn::Expr,
     hash_num: &mut u64,
     stack_num: usize) {
 
-    debug!("--------------");
+    println!("--------------");
     debug!("expr found");
     println!("{:?}", expr);
     match expr {
@@ -983,6 +936,15 @@ fn parse_expr (expr: &syn::Expr,
             parse_expr(&expr_bin.left, None, data, hash_num, stack_num);
             parse_expr(&expr_bin.right, None, data, hash_num, stack_num);
         }, 
+        Expr::Unary(expr_unary) => {
+            if let Expr::Path(exprpath) = &*expr_unary.expr {
+                // println!("Ref target: {:?}", exprpath);
+                debug!(" Ref target: {}", path_fmt(&exprpath));
+                non_allo_insert(format!("{}", path_fmt(&exprpath)),
+                Infoitem::Dereference(expr_unary.clone()),
+                None, data, hash_num, stack_num);
+            }
+        },
         Expr::Struct(expr_struct) => {
             debug!("found struct");
             let struct_type = format!("{}", expr_struct.path.segments[expr_struct.path.segments.len()-1].ident);
@@ -1042,22 +1004,26 @@ fn parse_expr (expr: &syn::Expr,
                     let mut tokentree_buff = Vec::new();
                     let mut first_lit = false;
                     for item in _macro.mac.tokens.clone() {
-                        debug!("{:?}",item);
-                        match item {
+                        // print!("MACRO ITEM:{:?}",item);
+                        match item.clone() {
                             proc_macro2::TokenTree::Punct(punct) => {
-                                if !first_lit {
-                                    // dump "{:?...}" in println!()
-                                    tokentree_buff.clear();
-                                    first_lit = true;
-                                } else {
-                                    let mut tokenstream_buff = proc_macro2::TokenStream::new();
-                                    tokenstream_buff.extend(tokentree_buff);
-                                    let res: Result<syn::Expr, syn::Error> = syn::parse2(tokenstream_buff);
-                                    match res {
-                                        Ok(exp) => parse_expr(&exp, None, data, hash_num, stack_num),
-                                        Err(_) => debug!("Assert macro parse error"),
+                                if punct.as_char() == ','{
+                                    if !first_lit {
+                                        // dump "{:?...}" in println!()
+                                        tokentree_buff.clear();
+                                        first_lit = true;
+                                    } else {
+                                        let mut tokenstream_buff = proc_macro2::TokenStream::new();
+                                        tokenstream_buff.extend(tokentree_buff);
+                                        let res: Result<syn::Expr, syn::Error> = syn::parse2(tokenstream_buff);
+                                        match res {
+                                            Ok(exp) => parse_expr(&exp, None, data, hash_num, stack_num),
+                                            Err(_) => debug!("Assert macro parse error"),
+                                        }
+                                        tokentree_buff = Vec::new();
                                     }
-                                    tokentree_buff = Vec::new();
+                                } else {
+                                    tokentree_buff.push(item);
                                 }
                             }
                             _ => {
@@ -1067,7 +1033,9 @@ fn parse_expr (expr: &syn::Expr,
                     }
                     let mut tokenstream_buff = proc_macro2::TokenStream::new();
                     tokenstream_buff.extend(tokentree_buff);
+                    println!("LAST: {:?}", tokenstream_buff);
                     let res: Result<syn::Expr, syn::Error> = syn::parse2(tokenstream_buff);
+                    println!("LAST: {:?}", res);
                     match res {
                         Ok(exp) => parse_expr(&exp, None, data, hash_num, stack_num),
                         Err(_) => debug!("Assert macro parse error"),

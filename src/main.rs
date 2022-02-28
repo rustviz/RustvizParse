@@ -20,25 +20,23 @@ use clap::{Arg, App};
 mod syn_parse;
 use crate::syn_parse::{syn_parse, header_gen_str, asource_gen};
 
-
 fn main() {
-
-  let file_name = PathBuf::from("/Users/haochenz/Desktop/rustviz/src/examples/hatra1");
+  let file_name = PathBuf::from("/Users/haochenz/Desktop/rustviz/src/examples/mutable_borrow");
   let mainfname = file_name.join("main.rs");
   let sourcefname = file_name.join("source.rs");
   // let file_name = PathBuf::from("/Users/haochenz/Desktop/rustviz/src/examples/struct_rect/source.rs");
-  let (contents, line_num, mut var_map) = parse::parse_vars_to_map(&mainfname);
-
-  let parse_res = syn_parse(&file_name);
-    match parse_res {
-        Ok((rap, color_info)) => {
-          // println!("{}", header_gen_str(&rap));
-          println!("{:?}", rap);
-          println!("{:?}", color_info);
-          // let res = asource_gen(&file_name, &color_info,);
-        }
-        Err(e) => println!("error parsing header: {:?}", e),
+  // let (contents, line_num, mut var_map) = syn_parse::syn_parse(&mainfname);
+  println!("{:?}", sourcefname);
+  let parse_res = syn_parse(&sourcefname);
+  match parse_res {
+    Ok((rap, color_info)) => {
+      // println!("{}", header_gen_str(&rap));
+      println!("{:?}", rap);
+      println!("{:?}", color_info);
+      // let res = asource_gen(&file_name, &color_info,);
     }
+    Err(e) => println!("error parsing header: {:?}", e),
+  }
 }
 
 // fn main() {
